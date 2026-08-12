@@ -1,0 +1,14 @@
+{
+  "name": "ownhow",
+  "version": "0.3.0",
+  "description": "Inspect, select, and improve the local AI methods you own.",
+  "author": {
+    "name": "x2v-co",
+    "email": "lgc.329@gmail.com",
+    "url": "https://github.com/x2v-co"
+  },
+  "homepage": "https://ownhow.dev",
+  "repository": "https://github.com/x2v-co/ownhow",
+  "license": "Apache-2.0",
+  "keywords": ["claude-code", "skills", "plugins", "governance", "personal-methods"]
+}

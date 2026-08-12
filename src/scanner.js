@@ -3,10 +3,12 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { normalizeText, tokenize } from "./text.js";
+import { claudeRuntime } from "./runtimes/claude.js";
 
 const FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
 const COMMON_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
 const HERMES_EXCLUDED_DIRECTORIES = new Set([".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache"]);
+const CLAUDE_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
 const SKILL_SUPPORT_DIRECTORIES = new Set(["references", "templates", "assets", "scripts"]);
 
 function parseScalar(value) {
@@ -122,8 +124,10 @@ async function readHermesDisabled(hermesHome) {
 function runtimeFor(sourceRoot, { cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
   const source = path.resolve(sourceRoot);
   const hermes = path.resolve(hermesHome || path.join(home, ".hermes"), "skills");
+  const claude = path.resolve(home, ".claude");
   const codex = [path.resolve(home, ".codex"), path.resolve(home, ".agents"), path.resolve(cwd, ".agents"), path.resolve(cwd, "plugins"), path.resolve(cwd, "skills")];
   if (source === hermes || source.startsWith(`${hermes}${path.sep}`)) return "hermes";
+  if (source === claude || source.startsWith(`${claude}${path.sep}`) || source.includes(`${path.sep}.claude${path.sep}skills`)) return "claude";
   if (codex.some((root) => source === root || source.startsWith(`${root}${path.sep}`))) return "codex";
   return "unknown";
 }
@@ -132,11 +136,12 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime) {
   const body = await readFile(skillFile, "utf8");
   const metadata = parseFrontmatter(body);
   const directory = path.dirname(skillFile);
-  const name = String(metadata.name ?? path.basename(directory));
+  const skillName = String(metadata.name ?? path.basename(directory));
+  const name = runtime === "claude" && plugin ? `${plugin.name}:${skillName}` : skillName;
   const description = String(metadata.description ?? "");
   const text = normalizeText(`${name} ${description} ${body.replace(FRONTMATTER, "")}`);
   return {
-    id: componentId("skill", directory, sourceRoot), kind: "skill", runtime, name,
+    id: componentId("skill", directory, sourceRoot), kind: "skill", runtime, name, skillName,
     version: String(metadata.version ?? plugin?.version ?? "unversioned"), description,
     source: directory, plugin: plugin?.name ?? null, pluginVersion: plugin?.version ?? null,
     metadata, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
@@ -145,13 +150,21 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime) {
   };
 }
 
+function skillDirectories(root, manifest, runtime) {
+  if (runtime !== "claude") return [path.resolve(root, String(manifest.skills ?? "./skills"))];
+  const custom = normalizedList(manifest.skills).map((value) => path.resolve(root, value));
+  return [...new Set([path.join(root, "skills"), ...custom])];
+}
+
 async function readPlugin(manifestFile, sourceRoot, runtime) {
   const root = path.dirname(path.dirname(manifestFile));
   const raw = await readFile(manifestFile, "utf8");
   let manifest;
   try { manifest = JSON.parse(raw); } catch { return []; }
-  const skillsDirectory = path.resolve(root, String(manifest.skills ?? "./skills"));
-  const skillFiles = await walk(skillsDirectory, (file) => path.basename(file) === "SKILL.md");
+  const directories = skillDirectories(root, manifest, runtime);
+  const skillFiles = [];
+  for (const directory of directories) await walk(directory, (file) => path.basename(file) === "SKILL.md", skillFiles, runtime === "claude" ? { followSymlinks: true, pruneSkillSupport: true } : {});
+  if (runtime === "claude" && !skillFiles.length && !manifest.skills && await exists(path.join(root, "SKILL.md"))) skillFiles.push(path.join(root, "SKILL.md"));
   const plugin = {
     id: componentId("plugin", root, sourceRoot), kind: "plugin", runtime, name: String(manifest.name ?? path.basename(root)),
     version: String(manifest.version ?? "unversioned"), description: String(manifest.description ?? manifest.interface?.shortDescription ?? ""),
@@ -167,9 +180,17 @@ async function readPlugin(manifestFile, sourceRoot, runtime) {
 export function defaultRoots({ cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtime = "all" } = {}) {
   const codex = [path.join(home, ".codex", "plugins"), path.join(home, ".codex", "skills"), path.join(home, ".agents", "skills"), path.join(cwd, ".agents", "plugins"), path.join(cwd, "plugins"), path.join(cwd, "skills")];
   const hermes = [path.join(hermesHome || path.join(home, ".hermes"), "skills")];
+  const claude = [path.join(home, ".claude", "skills"), path.join(cwd, ".claude", "skills")];
   if (runtime === "codex") return codex;
   if (runtime === "hermes") return hermes;
-  return [...codex, ...hermes];
+  if (runtime === "claude") return claude;
+  return [...codex, ...hermes, ...claude];
+}
+
+export async function runtimeRoots({ cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtime = "all" } = {}) {
+  if (runtime === "claude") return (await claudeRuntime({ cwd, home })).roots;
+  if (runtime === "all") return [...defaultRoots({ cwd, home, hermesHome, runtime: "codex" }), ...defaultRoots({ cwd, home, hermesHome, runtime: "hermes" }), ...(await claudeRuntime({ cwd, home })).roots];
+  return defaultRoots({ cwd, home, hermesHome, runtime });
 }
 
 export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), runtime = "auto", home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
@@ -177,13 +198,23 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
   const components = [];
   const seen = new Set();
   const seenHermesNames = new Set();
+  const seenClaudeNames = new Set();
+  const seenClaudeTargets = new Set();
+  const claude = await claudeRuntime({ cwd, home });
   for (const sourceRoot of uniqueRoots) {
     const sourceRuntime = runtime === "auto" ? runtimeFor(sourceRoot, { cwd, home, hermesHome }) : runtime;
     const resolvedHermesHome = hermesHome || (sourceRuntime === "hermes" ? path.dirname(sourceRoot) : path.join(home, ".hermes"));
     const disabledHermesSkills = sourceRuntime === "hermes" ? await readHermesDisabled(resolvedHermesHome) : new Set();
-    const walkOptions = sourceRuntime === "hermes" ? { excludedDirectories: HERMES_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : {};
-    const manifests = await walk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === ".codex-plugin");
+    const claudeExcluded = claude.pluginRoots.has(sourceRoot) ? COMMON_EXCLUDED_DIRECTORIES : CLAUDE_EXCLUDED_DIRECTORIES;
+    const walkOptions = sourceRuntime === "hermes" ? { excludedDirectories: HERMES_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : sourceRuntime === "claude" ? { excludedDirectories: claudeExcluded, followSymlinks: true, pruneSkillSupport: true } : {};
+    const manifestDirectory = sourceRuntime === "claude" ? ".claude-plugin" : ".codex-plugin";
+    const manifests = await walk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === manifestDirectory, [], walkOptions);
     for (const manifest of manifests) {
+      if (sourceRuntime === "claude" && claude.skillRoots.has(sourceRoot)) {
+        let metadata;
+        try { metadata = JSON.parse(await readFile(manifest, "utf8")); } catch { continue; }
+        if (claude.disabledPlugins.has(`${metadata.name}@skills-dir`)) continue;
+      }
       for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime)) if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
     }
     for (const skillFile of await walk(sourceRoot, (file) => path.basename(file) === "SKILL.md", [], walkOptions)) {
@@ -191,6 +222,13 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
       const skill = await readSkill(skillFile, null, sourceRoot, sourceRuntime);
       if (sourceRuntime === "hermes" && (!matchesPlatform(skill.metadata) || !(await matchesEnvironment(skill.metadata)) || disabledHermesSkills.has(skill.name) || seenHermesNames.has(skill.name))) continue;
       if (sourceRuntime === "hermes") seenHermesNames.add(skill.name);
+      if (sourceRuntime === "claude") {
+        let target;
+        try { target = await realpath(path.dirname(skillFile)); } catch { continue; }
+        if (claude.disabledSkills.has(skill.name) || seenClaudeNames.has(skill.name) || seenClaudeTargets.has(target)) continue;
+        seenClaudeNames.add(skill.name);
+        seenClaudeTargets.add(target);
+      }
       if (!seen.has(skill.id)) { seen.add(skill.id); components.push(skill); }
     }
   }

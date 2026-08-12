@@ -1,0 +1,25 @@
+{
+  "name": "x2v",
+  "owner": {
+    "name": "x2v-co",
+    "email": "lgc.329@gmail.com"
+  },
+  "description": "Local-first tools for governing and evolving personal AI methods.",
+  "plugins": [
+    {
+      "name": "ownhow",
+      "source": "./plugins/ownhow",
+      "description": "Inspect, select, and improve the local AI methods you own.",
+      "version": "0.3.0",
+      "author": {
+        "name": "x2v-co",
+        "email": "lgc.329@gmail.com"
+      },
+      "homepage": "https://ownhow.dev",
+      "repository": "https://github.com/x2v-co/ownhow",
+      "license": "Apache-2.0",
+      "category": "productivity",
+      "tags": ["skills", "governance", "personal-methods"]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "ownhow",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Local-first governance and evolution for personal AI methods",
   "homepage": "https://ownhow.dev",
   "repository": {
@@ -24,7 +24,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/cli.js && node --check src/scanner.js && node --check src/analyzer.js && node --check src/resolver.js && node --check src/store.js",
+    "check": "node --check src/cli.js && node --check src/scanner.js && node --check src/runtimes/claude.js && node --check src/analyzer.js && node --check src/resolver.js && node --check src/store.js",
     "test": "node --test",
     "verify": "npm run check && npm test"
   },

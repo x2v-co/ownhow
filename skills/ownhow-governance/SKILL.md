@@ -1,6 +1,6 @@
 ---
 name: ownhow-governance
-description: Govern local AI skills and personal methods with OwnHow across Hermes and other agents. Use when selecting a skill, checking overlap, recording a correction, or proposing a user-owned improvement.
+description: Govern local AI skills and personal methods with OwnHow across Codex, Hermes, Claude Code, and other agents. Use when selecting a skill, checking overlap, recording a correction, or proposing a user-owned improvement.
 ---
 
 # OwnHow Governance
@@ -9,20 +9,22 @@ Use the local `ownhow` CLI as the governance layer for the current agent runtime
 
 ## Select the runtime
 
-For Hermes-only work, run:
+Select the current agent runtime:
 
 ```bash
+ownhow resolve "<task>" --runtime codex
 ownhow resolve "<task>" --runtime hermes
+ownhow resolve "<task>" --runtime claude
 ```
 
-For a cross-runtime comparison, run `ownhow analyze --runtime all` or `ownhow resolve "<task>" --runtime all`. Hermes skills are normally under `~/.hermes/skills`; use `--root PATH` for a custom `HERMES_HOME` or profile directory.
+For a cross-runtime comparison, run `ownhow analyze --runtime all` or `ownhow resolve "<task>" --runtime all`. Use `--root PATH` only for an explicit custom source.
 
 ## Govern evolution
 
 Record only an outcome or correction stated by the user or observed in the current task:
 
 ```bash
-ownhow record "<task>" --outcome failure --correction "<user correction>" --runtime hermes
+ownhow record "<task>" --outcome failure --correction "<user correction>" --runtime <runtime>
 ownhow propose
 ```
 
@@ -32,7 +34,7 @@ Show the proposal ID, correction, and risks before applying it. Apply only after
 ownhow apply <proposal-id>
 ```
 
-Personal Methods are local overlays. Keep the base Hermes skill unchanged, and never treat an automatically edited skill as an approved OwnHow method.
+Personal Methods are local overlays. Keep the base Skill unchanged, and never treat an automatically edited Skill as an approved OwnHow method.
 
 ## Safety
 
