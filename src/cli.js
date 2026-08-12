@@ -5,7 +5,7 @@ import { analyzeInventory } from "./analyzer.js";
 import { applyProposal, createProposal, createReceipt, saveProposal } from "./evolution.js";
 import { formatAnalysis, formatInventory, formatPlan } from "./format.js";
 import { resolveTask } from "./resolver.js";
-import { runtimeRoots, scanRoots } from "./scanner.js";
+import { runtimeRoots, scanRoots, scanRuntime } from "./scanner.js";
 import { appendReceipt, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
 
 function parseArgs(argv) {
@@ -29,10 +29,10 @@ function help() {
   return `OwnHow MVP - local governance for personal AI methods
 
 Usage:
-  ownhow scan [--runtime codex|hermes|claude|all] [--root PATH] [--state PATH] [--json]
-  ownhow analyze [--runtime codex|hermes|claude|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow resolve <task> [--runtime codex|hermes|claude|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow record <task> --outcome success|failure [--correction TEXT] [--runtime codex|hermes|claude|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow scan [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--state PATH] [--json]
+  ownhow analyze [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow resolve <task> [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow record <task> --outcome success|failure [--correction TEXT] [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
   ownhow propose [--receipt latest|ID] [--state PATH] [--json]
   ownhow apply <proposal-id> [--state PATH] [--json]
   ownhow status [--state PATH] [--json]
@@ -45,12 +45,13 @@ function output(value, json, formatter = null) { process.stdout.write(`${json ||
 function requireTask(parts) { const task = parts.join(" ").trim(); if (!task) throw new Error("Task is required."); return task; }
 function runtimeFor(options) {
   const runtime = options.runtime ?? "all";
-  if (!["codex", "hermes", "claude", "all"].includes(runtime)) throw new Error("--runtime must be codex, hermes, claude, or all.");
+  if (!["codex", "hermes", "claude", "pi", "opencode", "openclaw", "all"].includes(runtime)) throw new Error("--runtime must be codex, hermes, claude, pi, opencode, openclaw, or all.");
   return runtime;
 }
 async function rootsFor(options) { return options.root?.map((root) => path.resolve(root)) ?? runtimeRoots({ runtime: runtimeFor(options) }); }
 function sourceRuntimeFor(options) { return options.root && runtimeFor(options) !== "all" ? runtimeFor(options) : "auto"; }
-async function inventoryFor(options, stateDir) { return options.cached ? loadInventory(stateDir) : scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) }); }
+async function liveInventory(options) { return options.root ? scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) }) : scanRuntime({ runtime: runtimeFor(options) }); }
+async function inventoryFor(options, stateDir) { return options.cached ? loadInventory(stateDir) : liveInventory(options); }
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
@@ -60,7 +61,7 @@ async function main() {
   const stateDir = stateDirectory(options.state);
 
   if (command === "scan") {
-    const inventory = await scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) });
+    const inventory = await liveInventory(options);
     await saveInventory(stateDir, inventory);
     output(inventory, options.json, formatInventory);
     return;

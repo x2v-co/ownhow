@@ -1,6 +1,6 @@
 {
   "name": "ownhow",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Inspect, select, and improve the local AI methods you own.",
   "author": {
     "name": "x2v-co",
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "OwnHow",
     "shortDescription": "Govern your local AI methods.",
-    "longDescription": "OwnHow scans local Codex, Hermes, and Claude Code Plugins and Skills, explains task resolution and conflicts, records real outcomes, and evolves user-owned Personal Methods with explicit approval.",
+    "longDescription": "OwnHow scans local Codex, Hermes, Claude Code, Pi, OpenCode, and OpenClaw methods, explains task resolution and conflicts, records real outcomes, and evolves user-owned Personal Methods with explicit approval.",
     "developerName": "x2v-co",
     "category": "Productivity",
     "websiteURL": "https://ownhow.dev",

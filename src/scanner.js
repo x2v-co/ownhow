@@ -4,11 +4,15 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { normalizeText, tokenize } from "./text.js";
 import { claudeRuntime } from "./runtimes/claude.js";
+import { piRuntime } from "./runtimes/pi.js";
+import { opencodeRuntime } from "./runtimes/opencode.js";
+import { openclawRuntime } from "./runtimes/openclaw.js";
 
 const FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
 const COMMON_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
 const HERMES_EXCLUDED_DIRECTORIES = new Set([".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache"]);
 const CLAUDE_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
+const AGENT_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
 const SKILL_SUPPORT_DIRECTORIES = new Set(["references", "templates", "assets", "scripts"]);
 
 function parseScalar(value) {
@@ -150,6 +154,32 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime) {
   };
 }
 
+function syntheticSkill(entry, runtime) {
+  const name = String(entry.name);
+  const description = String(entry.description ?? "");
+  const source = String(entry.source ?? `${runtime}:runtime`);
+  const metadata = entry.metadata ?? {};
+  const text = normalizeText(`${name} ${description}`);
+  return {
+    id: `${runtime}:skill:${digest(source).slice(0, 8)}:${name}`, kind: "skill", runtime, name, skillName: name,
+    version: String(entry.version ?? "unversioned"), description, source, plugin: entry.plugin ?? null, pluginVersion: entry.pluginVersion ?? null,
+    metadata, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
+    reads: normalizedList(metadata.reads), writes: normalizedList(metadata.writes), tools: normalizedList(metadata.tools),
+    sideEffects: normalizedList(metadata.side_effects ?? metadata.sideEffects), text, tokens: [...tokenize(text)], digest: digest(JSON.stringify(entry))
+  };
+}
+
+function syntheticPlugin(entry, runtime) {
+  const name = String(entry.name);
+  const source = String(entry.source ?? `${runtime}:plugin:${name}`);
+  return {
+    id: `${runtime}:plugin:${digest(source).slice(0, 8)}:${name}`, kind: "plugin", runtime, name,
+    version: String(entry.version ?? "unversioned"), description: String(entry.description ?? ""), source,
+    manifest: null, metadata: entry.metadata ?? {}, skills: entry.skills ?? null, mcpServers: null, apps: null, hooks: null,
+    digest: digest(JSON.stringify(entry)), tokens: [...tokenize(`${name} ${entry.description ?? ""}`)]
+  };
+}
+
 function skillDirectories(root, manifest, runtime) {
   if (runtime !== "claude") return [path.resolve(root, String(manifest.skills ?? "./skills"))];
   const custom = normalizedList(manifest.skills).map((value) => path.resolve(root, value));
@@ -181,19 +211,28 @@ export function defaultRoots({ cwd = process.cwd(), home = os.homedir(), hermesH
   const codex = [path.join(home, ".codex", "plugins"), path.join(home, ".codex", "skills"), path.join(home, ".agents", "skills"), path.join(cwd, ".agents", "plugins"), path.join(cwd, "plugins"), path.join(cwd, "skills")];
   const hermes = [path.join(hermesHome || path.join(home, ".hermes"), "skills")];
   const claude = [path.join(home, ".claude", "skills"), path.join(cwd, ".claude", "skills")];
+  const pi = [path.join(home, ".pi", "agent", "skills"), path.join(home, ".agents", "skills"), path.join(cwd, ".pi", "skills"), path.join(cwd, ".agents", "skills")];
+  const opencode = [path.join(home, ".config", "opencode"), path.join(home, ".agents", "skills"), path.join(home, ".claude", "skills"), path.join(cwd, ".opencode"), path.join(cwd, ".agents", "skills"), path.join(cwd, ".claude", "skills")];
+  const openclaw = [path.join(home, ".openclaw", "workspace", "skills"), path.join(home, ".openclaw", "workspace", ".agents", "skills"), path.join(home, ".agents", "skills"), path.join(home, ".openclaw", "skills")];
   if (runtime === "codex") return codex;
   if (runtime === "hermes") return hermes;
   if (runtime === "claude") return claude;
-  return [...codex, ...hermes, ...claude];
+  if (runtime === "pi") return pi;
+  if (runtime === "opencode") return opencode;
+  if (runtime === "openclaw") return openclaw;
+  return [...codex, ...hermes, ...claude, ...pi, ...opencode, ...openclaw];
 }
 
 export async function runtimeRoots({ cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtime = "all" } = {}) {
   if (runtime === "claude") return (await claudeRuntime({ cwd, home })).roots;
-  if (runtime === "all") return [...defaultRoots({ cwd, home, hermesHome, runtime: "codex" }), ...defaultRoots({ cwd, home, hermesHome, runtime: "hermes" }), ...(await claudeRuntime({ cwd, home })).roots];
+  if (runtime === "pi") return (await piRuntime({ cwd, home })).roots;
+  if (runtime === "opencode") return (await opencodeRuntime({ cwd, home })).roots;
+  if (runtime === "openclaw") return (await openclawRuntime({ cwd, home })).roots;
+  if (runtime === "all") return [...new Set((await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw"].map((name) => runtimeRoots({ cwd, home, hermesHome, runtime: name })))).flat())];
   return defaultRoots({ cwd, home, hermesHome, runtime });
 }
 
-export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), runtime = "auto", home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
+export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), runtime = "auto", home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtimeState = null } = {}) {
   const uniqueRoots = [...new Set(roots.map((root) => path.resolve(root)))];
   const components = [];
   const seen = new Set();
@@ -201,12 +240,28 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
   const seenClaudeNames = new Set();
   const seenClaudeTargets = new Set();
   const claude = await claudeRuntime({ cwd, home });
+  const activeSkillNames = runtimeState?.activeSkillNames ?? null;
+  const explicitSkillFiles = runtimeState?.authoritative && Array.isArray(runtimeState.skillFiles) ? runtimeState.skillFiles : null;
+  const seenRuntimeNames = new Set();
+
+  for (const entry of runtimeState?.plugins ?? []) components.push(syntheticPlugin(entry, runtime));
+  if (explicitSkillFiles) {
+    for (const skillFile of explicitSkillFiles) {
+      const sourceRoot = uniqueRoots.find((root) => skillFile === root || skillFile.startsWith(`${root}${path.sep}`)) ?? path.dirname(skillFile);
+      const skill = await readSkill(skillFile, null, sourceRoot, runtime);
+      if (seenRuntimeNames.has(skill.name)) continue;
+      seenRuntimeNames.add(skill.name);
+      skill.id = `${runtime}:${skill.id}`;
+      components.push(skill);
+    }
+  }
   for (const sourceRoot of uniqueRoots) {
+    if (explicitSkillFiles) break;
     const sourceRuntime = runtime === "auto" ? runtimeFor(sourceRoot, { cwd, home, hermesHome }) : runtime;
     const resolvedHermesHome = hermesHome || (sourceRuntime === "hermes" ? path.dirname(sourceRoot) : path.join(home, ".hermes"));
     const disabledHermesSkills = sourceRuntime === "hermes" ? await readHermesDisabled(resolvedHermesHome) : new Set();
     const claudeExcluded = claude.pluginRoots.has(sourceRoot) ? COMMON_EXCLUDED_DIRECTORIES : CLAUDE_EXCLUDED_DIRECTORIES;
-    const walkOptions = sourceRuntime === "hermes" ? { excludedDirectories: HERMES_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : sourceRuntime === "claude" ? { excludedDirectories: claudeExcluded, followSymlinks: true, pruneSkillSupport: true } : {};
+    const walkOptions = sourceRuntime === "hermes" ? { excludedDirectories: HERMES_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : sourceRuntime === "claude" ? { excludedDirectories: claudeExcluded, followSymlinks: true, pruneSkillSupport: true } : ["pi", "opencode", "openclaw"].includes(sourceRuntime) ? { excludedDirectories: AGENT_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : {};
     const manifestDirectory = sourceRuntime === "claude" ? ".claude-plugin" : ".codex-plugin";
     const manifests = await walk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === manifestDirectory, [], walkOptions);
     for (const manifest of manifests) {
@@ -229,8 +284,39 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
         seenClaudeNames.add(skill.name);
         seenClaudeTargets.add(target);
       }
+      if (["pi", "opencode", "openclaw"].includes(sourceRuntime)) {
+        if ((activeSkillNames && !activeSkillNames.has(skill.name)) || seenRuntimeNames.has(skill.name)) continue;
+        seenRuntimeNames.add(skill.name);
+        skill.id = `${sourceRuntime}:${skill.id}`;
+      }
       if (!seen.has(skill.id)) { seen.add(skill.id); components.push(skill); }
     }
   }
+  for (const entry of runtimeState?.syntheticSkills ?? []) {
+    if (activeSkillNames && !activeSkillNames.has(String(entry.name))) continue;
+    if (seenRuntimeNames.has(String(entry.name))) continue;
+    seenRuntimeNames.add(String(entry.name));
+    components.push(syntheticSkill(entry, runtime));
+  }
   return { schemaVersion: "0.1", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd), roots: uniqueRoots, components: components.sort((a, b) => a.id.localeCompare(b.id)) };
+}
+
+async function adapterFor(runtime, options) {
+  if (runtime === "claude") return claudeRuntime(options);
+  if (runtime === "pi") return piRuntime(options);
+  if (runtime === "opencode") return opencodeRuntime(options);
+  if (runtime === "openclaw") return openclawRuntime(options);
+  return { roots: defaultRoots({ ...options, runtime }), authoritative: false };
+}
+
+export async function scanRuntime({ runtime = "all", cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
+  if (runtime === "all") {
+    const inventories = await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw"].map((name) => scanRuntime({ runtime: name, cwd, home, hermesHome })));
+    return {
+      schemaVersion: "0.1", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd),
+      roots: [...new Set(inventories.flatMap((item) => item.roots))], components: inventories.flatMap((item) => item.components).sort((a, b) => a.id.localeCompare(b.id))
+    };
+  }
+  const state = await adapterFor(runtime, { cwd, home, hermesHome });
+  return scanRoots({ roots: state.roots, cwd, home, hermesHome, runtime, runtimeState: state });
 }

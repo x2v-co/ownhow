@@ -1,6 +1,6 @@
 {
   "name": "ownhow",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local-first governance and evolution for personal AI methods",
   "homepage": "https://ownhow.dev",
   "repository": {
@@ -16,6 +16,7 @@
   },
   "files": [
     "src/",
+    "skills/",
     "README.md",
     "SECURITY.md",
     "LICENSE"
@@ -23,8 +24,18 @@
   "engines": {
     "node": ">=22"
   },
+  "keywords": [
+    "pi-package",
+    "agent-skills",
+    "skills-governance"
+  ],
+  "pi": {
+    "skills": [
+      "./skills/ownhow-governance"
+    ]
+  },
   "scripts": {
-    "check": "node --check src/cli.js && node --check src/scanner.js && node --check src/runtimes/claude.js && node --check src/analyzer.js && node --check src/resolver.js && node --check src/store.js",
+    "check": "node --check src/cli.js && node --check src/scanner.js && node --check src/runtimes/claude.js && node --check src/runtimes/pi.js && node --check src/runtimes/opencode.js && node --check src/runtimes/openclaw.js && node --check src/analyzer.js && node --check src/resolver.js && node --check src/store.js",
     "test": "node --test",
     "verify": "npm run check && npm test"
   },

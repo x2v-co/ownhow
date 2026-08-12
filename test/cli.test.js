@@ -50,7 +50,7 @@ test("resolves against a Hermes-only inventory", async () => {
 test("rejects unknown runtimes", async () => {
   await assert.rejects(
     exec(process.execPath, [path.join(root, "src", "cli.js"), "analyze", "--runtime", "other"]),
-    /--runtime must be codex, hermes, claude, or all/
+    /--runtime must be codex, hermes, claude, pi, opencode, openclaw, or all/
   );
 });
 
@@ -67,3 +67,14 @@ test("accepts a Claude-only inventory", async () => {
   const analysis = JSON.parse(stdout);
   assert.equal(analysis.coverage.totalSkills, 1);
 });
+
+for (const runtime of ["pi", "opencode", "openclaw"]) {
+  test(`accepts a ${runtime}-only inventory`, async () => {
+    const { stdout } = await exec(process.execPath, [
+      path.join(root, "src", "cli.js"), "analyze", "--runtime", runtime,
+      "--root", path.join(fixtures, ".agents", "skills"), "--json"
+    ]);
+    const analysis = JSON.parse(stdout);
+    assert.equal(analysis.coverage.totalSkills, 1);
+  });
+}

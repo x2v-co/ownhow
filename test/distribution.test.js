@@ -36,4 +36,8 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   assert.match(skill.description, /OwnHow CLI/);
   assert.equal(hermesSkill.name, "ownhow-governance");
   assert.match(hermesSkill.description, /Hermes/);
+  assert.deepEqual(packageMetadata.pi.skills, ["./skills/ownhow-governance"]);
+  assert.match(hermesSkill.description, /Pi/);
+  assert.match(hermesSkill.description, /OpenCode/);
+  assert.match(hermesSkill.description, /OpenClaw/);
 });

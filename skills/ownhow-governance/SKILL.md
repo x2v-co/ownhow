@@ -1,6 +1,6 @@
 ---
 name: ownhow-governance
-description: Govern local AI skills and personal methods with OwnHow across Codex, Hermes, Claude Code, and other agents. Use when selecting a skill, checking overlap, recording a correction, or proposing a user-owned improvement.
+description: Govern local AI skills and personal methods with OwnHow across Codex, Hermes, Claude Code, Pi, OpenCode, and OpenClaw. Use when selecting a skill, checking overlap, recording a correction, or proposing a user-owned improvement.
 ---
 
 # OwnHow Governance
@@ -15,6 +15,9 @@ Select the current agent runtime:
 ownhow resolve "<task>" --runtime codex
 ownhow resolve "<task>" --runtime hermes
 ownhow resolve "<task>" --runtime claude
+ownhow resolve "<task>" --runtime pi
+ownhow resolve "<task>" --runtime opencode
+ownhow resolve "<task>" --runtime openclaw
 ```
 
 For a cross-runtime comparison, run `ownhow analyze --runtime all` or `ownhow resolve "<task>" --runtime all`. Use `--root PATH` only for an explicit custom source.
