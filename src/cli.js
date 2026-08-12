@@ -6,7 +6,7 @@ import { applyProposal, createProposal, createReceipt, saveProposal } from "./ev
 import { formatAnalysis, formatInventory, formatPlan } from "./format.js";
 import { resolveTask } from "./resolver.js";
 import { defaultRoots, scanRoots } from "./scanner.js";
-import { appendReceipt, ensureState, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory, writeJson } from "./store.js";
+import { appendReceipt, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
 
 function parseArgs(argv) {
   const positional = [];
@@ -15,7 +15,7 @@ function parseArgs(argv) {
     const value = argv[index];
     if (!value.startsWith("--")) { positional.push(value); continue; }
     const key = value.slice(2);
-    if (["json", "help"].includes(key)) { options[key] = true; continue; }
+    if (["json", "help", "cached"].includes(key)) { options[key] = true; continue; }
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) throw new Error(`Missing value for --${key}`);
     index += 1;
@@ -30,18 +30,21 @@ function help() {
 
 Usage:
   ownhow scan [--root PATH] [--state PATH] [--json]
-  ownhow analyze [--state PATH] [--json]
-  ownhow resolve <task> [--state PATH] [--json]
-  ownhow record <task> --outcome success|failure [--correction TEXT] [--state PATH] [--json]
+  ownhow analyze [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow resolve <task> [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow record <task> --outcome success|failure [--correction TEXT] [--root PATH] [--cached] [--state PATH] [--json]
   ownhow propose [--receipt latest|ID] [--state PATH] [--json]
   ownhow apply <proposal-id> [--state PATH] [--json]
   ownhow status [--state PATH] [--json]
 
+Analyze and resolve use the live installation by default and do not write state.
 OwnHow never edits installed Codex Plugins or Skills.`;
 }
 
 function output(value, json, formatter = null) { process.stdout.write(`${json || !formatter ? JSON.stringify(value, null, 2) : formatter(value)}\n`); }
 function requireTask(parts) { const task = parts.join(" ").trim(); if (!task) throw new Error("Task is required."); return task; }
+function rootsFor(options) { return options.root?.map((root) => path.resolve(root)) ?? defaultRoots(); }
+async function inventoryFor(options, stateDir) { return options.cached ? loadInventory(stateDir) : scanRoots({ roots: rootsFor(options) }); }
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
@@ -49,24 +52,23 @@ async function main() {
   const { positional, options } = parseArgs(rest);
   if (!command || command === "help" || options.help) { process.stdout.write(`${help()}\n`); return; }
   const stateDir = stateDirectory(options.state);
-  await ensureState(stateDir);
 
   if (command === "scan") {
-    const roots = options.root?.map((root) => path.resolve(root)) ?? defaultRoots();
-    const inventory = await scanRoots({ roots });
+    const inventory = await scanRoots({ roots: rootsFor(options) });
     await saveInventory(stateDir, inventory);
     output(inventory, options.json, formatInventory);
     return;
   }
   if (command === "analyze") {
-    const analysis = analyzeInventory(await loadInventory(stateDir));
-    await writeJson(path.join(stateDir, "analysis.json"), analysis);
+    const inventory = await inventoryFor(options, stateDir);
+    const analysis = { ...analyzeInventory(inventory), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt };
     output(analysis, options.json, formatAnalysis);
     return;
   }
   if (command === "resolve" || command === "record") {
     const task = requireTask(positional);
-    const plan = resolveTask(await loadInventory(stateDir), task, await loadMethods(stateDir));
+    const inventory = await inventoryFor(options, stateDir);
+    const plan = { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt };
     if (command === "resolve") { output(plan, options.json, formatPlan); return; }
     if (!['success', 'failure'].includes(options.outcome)) throw new Error("--outcome must be success or failure.");
     const receipt = createReceipt(task, options.outcome, options.correction, plan);

@@ -4,6 +4,7 @@ const STOP_WORDS = new Set([
   "with", "you", "your", "user", "users", "using", "需要", "使用", "用户",
   "可以", "用于", "进行", "支持", "相关", "以及", "或者", "一个"
 ]);
+const CJK_SEGMENTER = new Intl.Segmenter("zh", { granularity: "word" });
 
 export function normalizeText(value) {
   return String(value ?? "")
@@ -17,15 +18,9 @@ export function normalizeText(value) {
 export function tokenize(value) {
   const normalized = normalizeText(value);
   const latin = normalized.match(/[a-z0-9][a-z0-9_-]{1,}/g) ?? [];
-  const cjkRuns = normalized.match(/[\p{Script=Han}]+/gu) ?? [];
-  const cjk = [];
-
-  for (const run of cjkRuns) {
-    if (run.length <= 2) cjk.push(run);
-    for (let index = 0; index < run.length - 1; index += 1) {
-      cjk.push(run.slice(index, index + 2));
-    }
-  }
+  const cjk = [...CJK_SEGMENTER.segment(normalized)]
+    .filter((entry) => entry.isWordLike && /\p{Script=Han}/u.test(entry.segment))
+    .map((entry) => entry.segment);
 
   return new Set([...latin, ...cjk].filter((token) => token.length > 1 && !STOP_WORDS.has(token)));
 }

@@ -14,12 +14,11 @@ It does not upload source files, call a model, or modify installed Plugins and S
 cd /Users/kl/workspace/x2v/ownhow
 npm link
 
-ownhow scan
 ownhow analyze
 ownhow resolve "review a merge request, fix findings, and verify the result"
 ```
 
-State is stored in `~/.ownhow` by default. Use `--state PATH` for an isolated experiment and `--root PATH` to scan an explicit source.
+`analyze` and `resolve` scan the live installation without writing state. Run `ownhow scan` when you explicitly want to save a snapshot, or pass `--cached` to analyze or resolve that snapshot. State is stored in `~/.ownhow` by default. Use `--state PATH` for an isolated experiment and `--root PATH` to scan an explicit source.
 
 ## Personal Method loop
 

@@ -10,7 +10,7 @@ export function formatInventory(inventory) {
 
 export function formatAnalysis(analysis) {
   const counts = countBy(analysis.findings, "severity");
-  const lines = [`Found ${analysis.findings.length} actionable findings`, `  High:   ${counts.high ?? 0}`, `  Medium: ${counts.medium ?? 0}`, `Coverage: ${analysis.coverage.totalSkills} Skills; ${analysis.coverage.missingDescription} missing descriptions, ${analysis.coverage.missingTriggers} without explicit triggers, ${analysis.coverage.missingTools} without explicit tools`, `Risk inventory: ${Object.entries(analysis.riskInventory).map(([name, count]) => `${name}=${count}`).join(", ") || "none"}`];
+  const lines = [`Inventory: ${analysis.inventoryMode ?? "unknown"} (${analysis.inventoryGeneratedAt ?? "unknown time"})`, `Found ${analysis.findings.length} actionable findings`, `  High:   ${counts.high ?? 0}`, `  Medium: ${counts.medium ?? 0}`, `Coverage: ${analysis.coverage.totalSkills} Skills; ${analysis.coverage.missingDescription} missing descriptions, ${analysis.coverage.missingTriggers} without explicit triggers, ${analysis.coverage.missingTools} without explicit tools`, `Risk inventory: ${Object.entries(analysis.riskInventory).map(([name, count]) => `${name}=${count}`).join(", ") || "none"}`];
   for (const finding of analysis.findings.slice(0, 20)) {
     lines.push(`- [${finding.severity}] ${finding.type}: ${finding.componentId ?? finding.components?.join(" <> ")}`);
   }
@@ -24,7 +24,7 @@ function formatPlanItem(item) {
 }
 
 export function formatPlan(plan) {
-  const lines = [`Task: ${plan.task}`, `Method: ${plan.methodId}`, `Primary: ${formatPlanItem(plan.primary)}`, `Augment: ${plan.augment.length ? plan.augment.map(formatPlanItem).join(", ") : "none"}`, `Risks: ${plan.risks.length ? plan.risks.join(", ") : "none"}`, `Why: ${plan.explanation}`];
+  const lines = [`Inventory: ${plan.inventoryMode ?? "unknown"} (${plan.inventoryGeneratedAt ?? "unknown time"})`, `Task: ${plan.task}`, `Personal Method: ${plan.methodId ?? "none"}`, `Primary: ${formatPlanItem(plan.primary)}`, `Augment: ${plan.augment.length ? plan.augment.map(formatPlanItem).join(", ") : "none"}`, `Risks: ${plan.risks.length ? plan.risks.join(", ") : "none"}`, `Why: ${plan.explanation}`];
   if (plan.correction) lines.push(`Personal correction: ${plan.correction}`);
   return lines.join("\n");
 }

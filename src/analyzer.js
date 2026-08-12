@@ -9,7 +9,7 @@ const RISK_PATTERNS = [
 ];
 
 export function riskSignals(component) {
-  const text = `${component.name} ${component.description} ${(component.sideEffects ?? []).join(" ")} ${(component.writes ?? []).join(" ")} ${component.text ?? ""}`;
+  const text = `${component.name} ${component.description} ${(component.sideEffects ?? []).join(" ")} ${(component.writes ?? []).join(" ")}`;
   return RISK_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
 }
 

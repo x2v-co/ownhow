@@ -19,6 +19,7 @@ test("applies an explicit Personal Method overlay and reuses its correction", as
     const task = "review merge request and fix findings";
     const firstPlan = resolveTask(inventory, task, []);
     assert.equal(firstPlan.primary.name, "reviewer");
+    assert.equal(firstPlan.methodId, null);
     const receipt = createReceipt(task, "failure", "Do not send a message until tests pass.", firstPlan);
     const proposal = createProposal(receipt);
     await saveProposal(stateDir, proposal);
