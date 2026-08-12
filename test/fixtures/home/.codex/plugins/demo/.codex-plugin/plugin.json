@@ -1,0 +1,7 @@
+{
+  "name": "demo-review",
+  "version": "1.0.0",
+  "description": "Review code and send approval messages",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}
