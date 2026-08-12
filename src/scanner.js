@@ -1,10 +1,13 @@
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { normalizeText, tokenize } from "./text.js";
 
 const FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
+const COMMON_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
+const HERMES_EXCLUDED_DIRECTORIES = new Set([".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache"]);
+const SKILL_SUPPORT_DIRECTORIES = new Set(["references", "templates", "assets", "scripts"]);
 
 function parseScalar(value) {
   const trimmed = value.trim();
@@ -21,9 +24,21 @@ export function parseFrontmatter(text) {
   const match = text.match(FRONTMATTER);
   if (!match) return {};
   const result = {};
-  for (const line of match[1].split("\n")) {
+  const lines = match[1].split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const item = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-    if (item) result[item[1]] = parseScalar(item[2]);
+    if (!item) continue;
+    const value = parseScalar(item[2]);
+    if (value !== "") { result[item[1]] = value; continue; }
+    const sequence = [];
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1].match(/^\s+-\s*(.+)$/);
+      if (!next) break;
+      sequence.push(parseScalar(next[1]));
+      index += 1;
+    }
+    result[item[1]] = sequence.length ? sequence : "";
   }
   return result;
 }
@@ -32,13 +47,23 @@ async function exists(file) {
   try { await access(file); return true; } catch { return false; }
 }
 
-async function walk(directory, predicate, results = []) {
+async function walk(directory, predicate, results = [], options = {}, visited = new Set()) {
   if (!(await exists(directory))) return results;
+  let canonical;
+  try { canonical = await realpath(directory); } catch { return results; }
+  if (visited.has(canonical)) return results;
+  visited.add(canonical);
   const entries = await readdir(directory, { withFileTypes: true });
+  const hasSkill = entries.some((entry) => entry.name === "SKILL.md" && !entry.isDirectory());
+  const excluded = options.excludedDirectories ?? COMMON_EXCLUDED_DIRECTORIES;
   for (const entry of entries) {
-    if ([".git", "node_modules", ".ownhow"].includes(entry.name)) continue;
+    if (excluded.has(entry.name) || (options.pruneSkillSupport && hasSkill && SKILL_SUPPORT_DIRECTORIES.has(entry.name))) continue;
     const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) await walk(file, predicate, results);
+    let directoryEntry = entry.isDirectory();
+    if (entry.isSymbolicLink() && options.followSymlinks) {
+      try { directoryEntry = (await stat(file)).isDirectory(); } catch { continue; }
+    }
+    if (directoryEntry) await walk(file, predicate, results, options, visited);
     else if (predicate(file)) results.push(file);
   }
   return results;
@@ -47,6 +72,52 @@ async function walk(directory, predicate, results = []) {
 function digest(text) { return createHash("sha256").update(text).digest("hex").slice(0, 16); }
 function componentId(kind, root, sourceRoot) { return `${kind}:${digest(sourceRoot).slice(0, 8)}:${path.relative(sourceRoot, root).replaceAll(path.sep, "/") || path.basename(root)}`; }
 function normalizedList(value) { return Array.isArray(value) ? value.map(String) : value == null || value === "" ? [] : [String(value)]; }
+
+function matchesPlatform(metadata) {
+  const platforms = normalizedList(metadata.platforms);
+  if (!platforms.length) return true;
+  const aliases = { macos: "darwin", windows: "win32" };
+  return platforms.some((value) => process.platform.startsWith(aliases[value.toLowerCase()] ?? value.toLowerCase()));
+}
+
+async function matchesEnvironment(metadata) {
+  const environments = normalizedList(metadata.environments).map((value) => value.toLowerCase());
+  if (!environments.length) return true;
+  for (const environment of environments) {
+    if (!["kanban", "docker", "s6"].includes(environment)) return true;
+    if (environment === "kanban" && (process.env.HERMES_KANBAN_TASK || process.env.HERMES_KANBAN_BOARD)) return true;
+    if (environment === "docker" && ((await exists("/.dockerenv")) || (await exists("/run/.containerenv")))) return true;
+    if (environment === "s6" && ((await exists("/run/s6")) || (await exists("/package/admin/s6-overlay")))) return true;
+  }
+  return false;
+}
+
+async function readHermesDisabled(hermesHome) {
+  let text;
+  try { text = await readFile(path.join(hermesHome, "config.yaml"), "utf8"); } catch { return new Set(); }
+  const allLines = text.split("\n");
+  const start = allLines.findIndex((line) => /^skills:\s*$/.test(line));
+  if (start < 0) return new Set();
+  const lines = [];
+  for (let index = start + 1; index < allLines.length; index += 1) {
+    if (/^\S/.test(allLines[index])) break;
+    lines.push(allLines[index]);
+  }
+  const disabled = new Set();
+  for (let index = 0; index < lines.length; index += 1) {
+    const item = lines[index].match(/^\s{2}disabled:\s*(.*)$/);
+    if (!item) continue;
+    const inline = normalizedList(parseScalar(item[1]));
+    for (const name of inline) disabled.add(name);
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1].match(/^\s{4}-\s*(.+)$/);
+      if (!next) break;
+      disabled.add(String(parseScalar(next[1])));
+      index += 1;
+    }
+  }
+  return disabled;
+}
 
 function runtimeFor(sourceRoot, { cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
   const source = path.resolve(sourceRoot);
@@ -105,15 +176,21 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
   const uniqueRoots = [...new Set(roots.map((root) => path.resolve(root)))];
   const components = [];
   const seen = new Set();
+  const seenHermesNames = new Set();
   for (const sourceRoot of uniqueRoots) {
     const sourceRuntime = runtime === "auto" ? runtimeFor(sourceRoot, { cwd, home, hermesHome }) : runtime;
+    const resolvedHermesHome = hermesHome || (sourceRuntime === "hermes" ? path.dirname(sourceRoot) : path.join(home, ".hermes"));
+    const disabledHermesSkills = sourceRuntime === "hermes" ? await readHermesDisabled(resolvedHermesHome) : new Set();
+    const walkOptions = sourceRuntime === "hermes" ? { excludedDirectories: HERMES_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : {};
     const manifests = await walk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === ".codex-plugin");
     for (const manifest of manifests) {
       for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime)) if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
     }
-    for (const skillFile of await walk(sourceRoot, (file) => path.basename(file) === "SKILL.md")) {
+    for (const skillFile of await walk(sourceRoot, (file) => path.basename(file) === "SKILL.md", [], walkOptions)) {
       if (components.some((entry) => entry.kind === "skill" && entry.source === path.dirname(skillFile))) continue;
       const skill = await readSkill(skillFile, null, sourceRoot, sourceRuntime);
+      if (sourceRuntime === "hermes" && (!matchesPlatform(skill.metadata) || !(await matchesEnvironment(skill.metadata)) || disabledHermesSkills.has(skill.name) || seenHermesNames.has(skill.name))) continue;
+      if (sourceRuntime === "hermes") seenHermesNames.add(skill.name);
       if (!seen.has(skill.id)) { seen.add(skill.id); components.push(skill); }
     }
   }

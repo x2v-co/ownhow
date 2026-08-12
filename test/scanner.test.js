@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import os from "node:os";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defaultRoots, scanRoots } from "../src/scanner.js";
 import { analyzeInventory } from "../src/analyzer.js";
@@ -45,4 +47,36 @@ test("marks project-local Codex skill roots", async () => {
   const skillRoot = path.join(fixtures, ".agents", "skills");
   const inventory = await scanRoots({ roots: [skillRoot], cwd: project, home: fixtures });
   assert.equal(inventory.components[0].runtime, "codex");
+});
+
+test("matches Hermes active-skill discovery semantics", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-hermes-scan-"));
+  const hermesHome = path.join(temporary, ".hermes");
+  const skills = path.join(hermesHome, "skills");
+  const external = path.join(temporary, "external-skill");
+  const skill = (name, extra = "") => `---\nname: ${name}\ndescription: ${name} description\n${extra}---\n\n# ${name}\n`;
+  try {
+    await Promise.all([
+      mkdir(path.join(skills, "active", "references", "nested"), { recursive: true }),
+      mkdir(path.join(skills, ".archive", "archived"), { recursive: true }),
+      mkdir(path.join(skills, "kanban-only"), { recursive: true }),
+      mkdir(path.join(skills, "disabled"), { recursive: true }),
+      mkdir(external, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(path.join(skills, "active", "SKILL.md"), skill("active")),
+      writeFile(path.join(skills, "active", "references", "nested", "SKILL.md"), skill("nested-support")),
+      writeFile(path.join(skills, ".archive", "archived", "SKILL.md"), skill("archived")),
+      writeFile(path.join(skills, "kanban-only", "SKILL.md"), skill("kanban-only", "environments:\n  - kanban\n")),
+      writeFile(path.join(skills, "disabled", "SKILL.md"), skill("disabled")),
+      writeFile(path.join(external, "SKILL.md"), skill("linked")),
+      writeFile(path.join(hermesHome, "config.yaml"), "skills:\n  disabled:\n    - disabled\n")
+    ]);
+    await symlink(external, path.join(skills, "linked"), "dir");
+
+    const inventory = await scanRoots({ roots: [skills], runtime: "hermes", hermesHome });
+    assert.deepEqual(inventory.components.map((item) => item.name).sort(), ["active", "linked"]);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
