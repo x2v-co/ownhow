@@ -3,7 +3,7 @@ import { matchingTokens, overlapScore, tokenize } from "./text.js";
 
 function searchTokens(component) { return tokenize([component.name, component.description, ...(component.triggers ?? []), ...(component.metadata?.keywords ?? [])].join(" ")); }
 function scoreComponent(component, taskTokens) { const search = searchTokens(component); return Number((overlapScore(search, taskTokens) * 0.55 + overlapScore(tokenize((component.triggers ?? []).join(" ")), taskTokens) * 0.3 + overlapScore(tokenize(component.name), taskTokens) * 0.15).toFixed(3)); }
-function planEntry(entry) { const hardRisks = ["external_message", "destructive_write", "credential_or_payment"]; return { id: entry.component.id, name: entry.component.name, source: entry.component.source, score: entry.score, sharedTokens: entry.sharedTokens, risks: entry.risks, requiresApproval: entry.risks.some((risk) => hardRisks.includes(risk)) }; }
+function planEntry(entry) { const hardRisks = ["external_message", "destructive_write", "credential_or_payment"]; return { id: entry.component.id, name: entry.component.name, runtime: entry.component.runtime ?? "unknown", plugin: entry.component.plugin ?? null, source: entry.component.source, score: entry.score, sharedTokens: entry.sharedTokens, risks: entry.risks, requiresApproval: entry.risks.some((risk) => hardRisks.includes(risk)) }; }
 function meetsSelectionThreshold(entry) { return entry.score >= 0.08 || (entry.score >= 0.04 && entry.sharedTokens.length >= 5); }
 
 export function resolveTask(inventory, task, methods = []) {

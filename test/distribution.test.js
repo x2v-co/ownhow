@@ -14,6 +14,8 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   const marketplace = await readJson(".agents/plugins/marketplace.json");
   const skillText = await readFile(path.join(root, "plugins/ownhow/skills/govern-personal-methods/SKILL.md"), "utf8");
   const skill = parseFrontmatter(skillText);
+  const hermesSkillText = await readFile(path.join(root, "skills/ownhow-governance/SKILL.md"), "utf8");
+  const hermesSkill = parseFrontmatter(hermesSkillText);
 
   assert.equal(plugin.name, "ownhow");
   assert.equal(plugin.version, packageMetadata.version);
@@ -23,4 +25,6 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   assert.equal(marketplace.plugins[0].source.path, "./plugins/ownhow");
   assert.equal(skill.name, "govern-personal-methods");
   assert.match(skill.description, /OwnHow CLI/);
+  assert.equal(hermesSkill.name, "ownhow-governance");
+  assert.match(hermesSkill.description, /Hermes/);
 });

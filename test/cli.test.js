@@ -30,3 +30,26 @@ test("analyzes live roots without creating local state", async () => {
     await rm(temporary, { recursive: true, force: true });
   }
 });
+
+test("resolves against a Hermes-only inventory", async () => {
+  const { stdout } = await exec(process.execPath, [
+    path.join(root, "src", "cli.js"),
+    "resolve",
+    "research a topic and cite findings",
+    "--runtime",
+    "hermes",
+    "--root",
+    path.join(fixtures, ".hermes", "skills"),
+    "--json"
+  ]);
+  const plan = JSON.parse(stdout);
+  assert.equal(plan.primary.name, "hermes-research");
+  assert.equal(plan.primary.runtime, "hermes");
+});
+
+test("rejects unknown runtimes", async () => {
+  await assert.rejects(
+    exec(process.execPath, [path.join(root, "src", "cli.js"), "analyze", "--runtime", "other"]),
+    /--runtime must be codex, hermes, or all/
+  );
+});

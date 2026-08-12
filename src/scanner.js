@@ -48,7 +48,16 @@ function digest(text) { return createHash("sha256").update(text).digest("hex").s
 function componentId(kind, root, sourceRoot) { return `${kind}:${digest(sourceRoot).slice(0, 8)}:${path.relative(sourceRoot, root).replaceAll(path.sep, "/") || path.basename(root)}`; }
 function normalizedList(value) { return Array.isArray(value) ? value.map(String) : value == null || value === "" ? [] : [String(value)]; }
 
-async function readSkill(skillFile, plugin, sourceRoot) {
+function runtimeFor(sourceRoot, { cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
+  const source = path.resolve(sourceRoot);
+  const hermes = path.resolve(hermesHome || path.join(home, ".hermes"), "skills");
+  const codex = [path.resolve(home, ".codex"), path.resolve(home, ".agents"), path.resolve(cwd, ".agents"), path.resolve(cwd, "plugins"), path.resolve(cwd, "skills")];
+  if (source === hermes || source.startsWith(`${hermes}${path.sep}`)) return "hermes";
+  if (codex.some((root) => source === root || source.startsWith(`${root}${path.sep}`))) return "codex";
+  return "unknown";
+}
+
+async function readSkill(skillFile, plugin, sourceRoot, runtime) {
   const body = await readFile(skillFile, "utf8");
   const metadata = parseFrontmatter(body);
   const directory = path.dirname(skillFile);
@@ -56,7 +65,7 @@ async function readSkill(skillFile, plugin, sourceRoot) {
   const description = String(metadata.description ?? "");
   const text = normalizeText(`${name} ${description} ${body.replace(FRONTMATTER, "")}`);
   return {
-    id: componentId("skill", directory, sourceRoot), kind: "skill", name,
+    id: componentId("skill", directory, sourceRoot), kind: "skill", runtime, name,
     version: String(metadata.version ?? plugin?.version ?? "unversioned"), description,
     source: directory, plugin: plugin?.name ?? null, pluginVersion: plugin?.version ?? null,
     metadata, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
@@ -65,7 +74,7 @@ async function readSkill(skillFile, plugin, sourceRoot) {
   };
 }
 
-async function readPlugin(manifestFile, sourceRoot) {
+async function readPlugin(manifestFile, sourceRoot, runtime) {
   const root = path.dirname(path.dirname(manifestFile));
   const raw = await readFile(manifestFile, "utf8");
   let manifest;
@@ -73,7 +82,7 @@ async function readPlugin(manifestFile, sourceRoot) {
   const skillsDirectory = path.resolve(root, String(manifest.skills ?? "./skills"));
   const skillFiles = await walk(skillsDirectory, (file) => path.basename(file) === "SKILL.md");
   const plugin = {
-    id: componentId("plugin", root, sourceRoot), kind: "plugin", name: String(manifest.name ?? path.basename(root)),
+    id: componentId("plugin", root, sourceRoot), kind: "plugin", runtime, name: String(manifest.name ?? path.basename(root)),
     version: String(manifest.version ?? "unversioned"), description: String(manifest.description ?? manifest.interface?.shortDescription ?? ""),
     source: root, manifest: manifestFile, metadata: manifest, skills: skillFiles.length,
     mcpServers: manifest.mcpServers ? path.resolve(root, String(manifest.mcpServers)) : null,
@@ -81,25 +90,30 @@ async function readPlugin(manifestFile, sourceRoot) {
     hooks: manifest.hooks ?? ((await exists(path.join(root, "hooks", "hooks.json"))) ? path.join(root, "hooks", "hooks.json") : null),
     digest: digest(raw), tokens: [...tokenize(`${manifest.name ?? ""} ${manifest.description ?? ""} ${manifest.interface?.shortDescription ?? ""}`)]
   };
-  return [plugin, ...(await Promise.all(skillFiles.map((file) => readSkill(file, plugin, sourceRoot))))];
+  return [plugin, ...(await Promise.all(skillFiles.map((file) => readSkill(file, plugin, sourceRoot, runtime))))];
 }
 
-export function defaultRoots({ cwd = process.cwd(), home = os.homedir() } = {}) {
-  return [path.join(home, ".codex", "plugins"), path.join(home, ".codex", "skills"), path.join(home, ".agents", "skills"), path.join(cwd, ".agents", "plugins"), path.join(cwd, "plugins"), path.join(cwd, "skills")];
+export function defaultRoots({ cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtime = "all" } = {}) {
+  const codex = [path.join(home, ".codex", "plugins"), path.join(home, ".codex", "skills"), path.join(home, ".agents", "skills"), path.join(cwd, ".agents", "plugins"), path.join(cwd, "plugins"), path.join(cwd, "skills")];
+  const hermes = [path.join(hermesHome || path.join(home, ".hermes"), "skills")];
+  if (runtime === "codex") return codex;
+  if (runtime === "hermes") return hermes;
+  return [...codex, ...hermes];
 }
 
-export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd() } = {}) {
+export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), runtime = "auto", home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
   const uniqueRoots = [...new Set(roots.map((root) => path.resolve(root)))];
   const components = [];
   const seen = new Set();
   for (const sourceRoot of uniqueRoots) {
+    const sourceRuntime = runtime === "auto" ? runtimeFor(sourceRoot, { cwd, home, hermesHome }) : runtime;
     const manifests = await walk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === ".codex-plugin");
     for (const manifest of manifests) {
-      for (const entry of await readPlugin(manifest, sourceRoot)) if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
+      for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime)) if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
     }
     for (const skillFile of await walk(sourceRoot, (file) => path.basename(file) === "SKILL.md")) {
       if (components.some((entry) => entry.kind === "skill" && entry.source === path.dirname(skillFile))) continue;
-      const skill = await readSkill(skillFile, null, sourceRoot);
+      const skill = await readSkill(skillFile, null, sourceRoot, sourceRuntime);
       if (!seen.has(skill.id)) { seen.add(skill.id); components.push(skill); }
     }
   }

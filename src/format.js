@@ -20,7 +20,7 @@ export function formatAnalysis(analysis) {
 
 function formatPlanItem(item) {
   if (!item) return "none";
-  return `${item.name} (${item.score})${item.requiresApproval ? " [approval]" : ""}`;
+  return `${item.name} [${item.runtime}] (${item.score})${item.requiresApproval ? " [approval]" : ""}`;
 }
 
 export function formatPlan(plan) {
