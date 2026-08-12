@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
-import { access } from "node:fs/promises";
-
-const exec = promisify(execFile);
+import { access, mkdtemp, open, readFile, rm } from "node:fs/promises";
 
 async function exists(file) {
   try { await access(file); return true; } catch { return false; }
@@ -24,8 +21,26 @@ async function projectChain(cwd) {
 }
 
 async function defaultRun(command, args, options) {
-  const { stdout } = await exec(command, args, { cwd: options.cwd, env: options.env, maxBuffer: 64 * 1024 * 1024 });
-  return JSON.parse(stdout);
+  // OpenCode can exit before a large piped JSON write drains. A regular file
+  // avoids the pipe backpressure bug while preserving its official output.
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-opencode-"));
+  const outputFile = path.join(temporary, "output.json");
+  const output = await open(outputFile, "w");
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", output.fd, "pipe"] });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("error", reject);
+      child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`${command} exited with ${code}: ${stderr.trim()}`)));
+    });
+    await output.close();
+    return JSON.parse(await readFile(outputFile, "utf8"));
+  } finally {
+    await output.close().catch(() => {});
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 
 function enabledFlag(value) {

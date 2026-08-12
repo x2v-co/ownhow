@@ -13,14 +13,14 @@ It does not upload source files, call a model, or modify installed Plugins and S
 Install the CLI directly from this repository:
 
 ```bash
-npm install --global github:x2v-co/ownhow#v0.4.0
+npm install --global github:x2v-co/ownhow#v0.4.1
 ownhow --help
 ```
 
 Add the OwnHow marketplace and install the Codex Plugin (optional):
 
 ```bash
-codex plugin marketplace add x2v-co/ownhow --ref v0.4.0
+codex plugin marketplace add x2v-co/ownhow --ref v0.4.1
 codex plugin add ownhow@x2v
 ```
 
@@ -31,7 +31,7 @@ Start a new Codex chat after installing the Plugin. The Plugin provides the gove
 Install the standalone Hermes Skill into the active Hermes profile:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.4.0/skills/ownhow-governance/SKILL.md --yes
+hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.4.1/skills/ownhow-governance/SKILL.md --yes
 ```
 
 The CLI discovers active Hermes skills under `~/.hermes/skills` automatically, following Hermes' archive, support-directory, platform, environment, disabled-skill, symlink, and duplicate-name discovery rules. Use `--runtime hermes` to keep analysis scoped to Hermes, or `--root PATH` for a custom `HERMES_HOME`/profile.
@@ -54,7 +54,7 @@ The static inventory includes project Skills active at session startup. Claude C
 Install OwnHow as a Pi Package:
 
 ```bash
-pi install git:github.com/x2v-co/ownhow@v0.4.0
+pi install git:github.com/x2v-co/ownhow@v0.4.1
 ```
 
 OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and `.agents` discovery, settings filters, symlink deduplication, and Package-contributed Skills. Use `--runtime pi` for Pi-only analysis.
@@ -64,7 +64,7 @@ OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and 
 Install the standalone Skill in OpenCode's global Skill directory:
 
 ```bash
-git clone --branch v0.4.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.4.1 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 ln -s ~/.local/share/ownhow/skills/ownhow-governance ~/.config/opencode/skills/ownhow-governance
 ```
 
@@ -75,7 +75,7 @@ OwnHow uses `opencode debug skill` as the authoritative live inventory when Open
 Install the standalone Skill globally:
 
 ```bash
-git clone --branch v0.4.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.4.1 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global --as ownhow-governance
 ```
 
