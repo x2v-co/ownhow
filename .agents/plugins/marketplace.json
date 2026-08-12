@@ -1,0 +1,20 @@
+{
+  "name": "x2v",
+  "interface": {
+    "displayName": "X2V"
+  },
+  "plugins": [
+    {
+      "name": "ownhow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ownhow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -8,10 +8,29 @@ It does not upload source files, call a model, or modify installed Plugins and S
 
 - Node.js 22 or newer
 
-## Run locally
+## Install
+
+Install the CLI directly from this repository:
 
 ```bash
-cd /Users/kl/workspace/x2v/ownhow
+npm install --global github:x2v-co/ownhow#v0.1.0
+ownhow --help
+```
+
+Add the OwnHow marketplace and install the Codex Plugin:
+
+```bash
+codex plugin marketplace add x2v-co/ownhow --ref v0.1.0
+codex plugin add ownhow@x2v
+```
+
+Start a new Codex chat after installing the Plugin. The Plugin provides the governance workflow; the `ownhow` CLI performs local scanning and stores approved personal state.
+
+## Run from source
+
+```bash
+git clone https://github.com/x2v-co/ownhow.git
+cd ownhow
 npm link
 
 ownhow analyze
@@ -68,4 +87,12 @@ npm run verify
 - Deterministic local analysis; no LLM resolver
 - Local JSON/JSONL state
 - Personal Method overlays do not rewrite upstream packages
-- No cloud account, marketplace, team control plane, or automatic evolution
+- No cloud account, hosted registry, team control plane, or automatic evolution
+
+## Privacy and security
+
+OwnHow state can reveal private workflows and local filesystem paths. Do not commit or upload `~/.ownhow`, real inventories, receipts, corrections, proposals, or Personal Methods. See [SECURITY.md](SECURITY.md) for the disclosure and test-data policy.
+
+## Contributing
+
+OwnHow is in an evidence-gathering MVP phase. Reproducible selection failures, synthetic fixtures, and focused resolver or safety fixes are more useful than broad platform features. See [CONTRIBUTING.md](CONTRIBUTING.md).

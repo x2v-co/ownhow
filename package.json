@@ -2,10 +2,24 @@
   "name": "ownhow",
   "version": "0.1.0",
   "description": "Local-first governance and evolution for personal AI methods",
+  "homepage": "https://ownhow.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/x2v-co/ownhow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/x2v-co/ownhow/issues"
+  },
   "type": "module",
   "bin": {
     "ownhow": "./src/cli.js"
   },
+  "files": [
+    "src/",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22"
   },

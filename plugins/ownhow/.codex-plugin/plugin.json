@@ -1,0 +1,33 @@
+{
+  "name": "ownhow",
+  "version": "0.1.0",
+  "description": "Inspect, select, and improve the local AI methods you own.",
+  "author": {
+    "name": "x2v-co",
+    "email": "lgc.329@gmail.com",
+    "url": "https://github.com/x2v-co"
+  },
+  "homepage": "https://ownhow.dev",
+  "repository": "https://github.com/x2v-co/ownhow",
+  "license": "Apache-2.0",
+  "keywords": ["codex", "skills", "plugins", "governance", "personal-methods"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OwnHow",
+    "shortDescription": "Govern your local AI methods.",
+    "longDescription": "OwnHow scans local Codex Plugins and Skills, explains task resolution and conflicts, records real outcomes, and evolves user-owned Personal Methods with explicit approval.",
+    "developerName": "x2v-co",
+    "category": "Productivity",
+    "websiteURL": "https://ownhow.dev",
+    "capabilities": [
+      "Inspect local methods",
+      "Resolve task methods",
+      "Evolve personal methods"
+    ],
+    "defaultPrompt": [
+      "Inspect my local Codex methods and explain actionable conflicts.",
+      "Resolve my current task to the best local method.",
+      "Turn my latest correction into a Personal Method proposal."
+    ]
+  }
+}
