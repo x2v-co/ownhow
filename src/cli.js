@@ -45,6 +45,7 @@ function requireTask(parts) { const task = parts.join(" ").trim(); if (!task) th
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
+  if (command === "--help" || command === "-h") { process.stdout.write(`${help()}\n`); return; }
   const { positional, options } = parseArgs(rest);
   if (!command || command === "help" || options.help) { process.stdout.write(`${help()}\n`); return; }
   const stateDir = stateDirectory(options.state);
