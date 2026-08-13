@@ -31,3 +31,7 @@ The `ownhow:receipt-bundle:v1:` capsule is an untrusted copy-and-paste transport
 - Export omits raw conversations, inventories, Skill bodies, traces, and local component identifiers. It redacts common path and credential patterns, but cannot guarantee removal of all confidential data.
 - Review the source label, task, correction, redaction notices, and customer confidentiality before accepting. A source `agentId` is a self-asserted label, not verified identity.
 - Duplicate bundle, digest, and source Receipt IDs are imported idempotently. Rejected imports remain as local audit records rather than being deleted.
+
+## Inventory Scope
+
+A filesystem candidate is not proof that a Skill is installed, enabled, or callable in the current Agent session. OwnHow records those lifecycle states independently. When a runtime does not expose an authoritative active/eligible report, installation and session visibility remain unknown; reports must not present candidate discovery as active capability. Recursive fallback scans exclude temporary review/smoke directories, worktrees, build output, and common caches.

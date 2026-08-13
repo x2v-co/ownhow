@@ -26,3 +26,17 @@ test("does not select a Skill from incidental overlap", () => {
   const plan = resolveTask({ components: [governanceSkill] }, "修复 Codex 项目中的一个按钮", []);
   assert.equal(plan.primary, null);
 });
+
+test("uses only session-visible components for authoritative inventories", () => {
+  const base = {
+    schemaVersion: "0.2",
+    analysisScope: "session-visible",
+    components: [
+      { id: "visible", kind: "skill", name: "visible-review", description: "review merge requests", triggers: [], metadata: {}, sideEffects: [], writes: [], lifecycle: { discovered: true, installed: true, enabled: true, sessionVisible: true } },
+      { id: "hidden", kind: "skill", name: "hidden-review", description: "review merge requests", triggers: [], metadata: {}, sideEffects: [], writes: [], lifecycle: { discovered: true, installed: true, enabled: false, sessionVisible: false } }
+    ]
+  };
+  const plan = resolveTask(base, "review merge requests", []);
+  assert.equal(plan.primary.id, "visible");
+  assert.ok(!plan.excluded.some((item) => item.id === "hidden"));
+});

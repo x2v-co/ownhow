@@ -94,14 +94,14 @@ async function main() {
   }
   if (command === "analyze") {
     const inventory = await inventoryFor(options, stateDir);
-    const analysis = { ...analyzeInventory(inventory), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt };
+    const analysis = { ...analyzeInventory(inventory), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
     output(analysis, options.json, formatAnalysis);
     return;
   }
   if (command === "resolve" || command === "record") {
     const task = requireTask(positional);
     const inventory = await inventoryFor(options, stateDir);
-    const plan = { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt };
+    const plan = { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
     if (command === "resolve") { output(plan, options.json, formatPlan); return; }
     if (!['success', 'failure'].includes(options.outcome)) throw new Error("--outcome must be success or failure.");
     const receipt = createReceipt(task, options.outcome, options.correction, plan, { runtime: runtimeFor(options) });

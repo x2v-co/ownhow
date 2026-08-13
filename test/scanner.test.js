@@ -49,6 +49,52 @@ test("marks project-local Codex skill roots", async () => {
   assert.equal(inventory.components[0].runtime, "codex");
 });
 
+test("excludes temporary checkouts and build output from recursive candidates", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-filter-scan-"));
+  const skill = (name) => `---\nname: ${name}\ndescription: ${name} description\n---\n\n# ${name}\n`;
+  try {
+    await Promise.all([
+      mkdir(path.join(temporary, "active"), { recursive: true }),
+      mkdir(path.join(temporary, ".review", "mr-123"), { recursive: true }),
+      mkdir(path.join(temporary, ".smoke", "run"), { recursive: true }),
+      mkdir(path.join(temporary, "build", "preview"), { recursive: true }),
+      mkdir(path.join(temporary, "nested", "worktree"), { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(path.join(temporary, "active", "SKILL.md"), skill("active")),
+      writeFile(path.join(temporary, ".review", "mr-123", "SKILL.md"), skill("review-copy")),
+      writeFile(path.join(temporary, ".smoke", "run", "SKILL.md"), skill("smoke-copy")),
+      writeFile(path.join(temporary, "build", "preview", "SKILL.md"), skill("build-copy")),
+      writeFile(path.join(temporary, "nested", "worktree", "SKILL.md"), skill("worktree-copy"))
+    ]);
+    const inventory = await scanRoots({ roots: [temporary], runtime: "codex" });
+    assert.deepEqual(inventory.components.map((item) => item.name), ["active"]);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("records lifecycle states and marks authoritative runtime output as session-visible", async () => {
+  const skillFile = path.join(fixtures, ".hermes", "skills", "research", "SKILL.md");
+  const inventory = await scanRoots({ roots: [path.dirname(skillFile)], runtime: "hermes", runtimeState: { authoritative: true, skillFiles: [skillFile] } });
+  assert.equal(inventory.analysisScope, "session-visible");
+  assert.deepEqual(inventory.components[0].lifecycle, { discovered: true, installed: true, enabled: true, sessionVisible: true });
+});
+
+test("analyze ignores discovered-only candidates outside the session-visible scope", () => {
+  const inventory = {
+    schemaVersion: "0.2",
+    analysisScope: "session-visible",
+    components: [
+      { id: "active", kind: "skill", name: "shared", description: "same task", triggers: [], tools: [], writes: [], sideEffects: [], lifecycle: { discovered: true, installed: true, enabled: true, sessionVisible: true } },
+      { id: "temporary", kind: "skill", name: "shared", description: "same task", triggers: [], tools: [], writes: [], sideEffects: [], lifecycle: { discovered: true, installed: null, enabled: null, sessionVisible: false } }
+    ]
+  };
+  const analysis = analyzeInventory(inventory);
+  assert.equal(analysis.coverage.totalSkills, 1);
+  assert.equal(analysis.findings.length, 0);
+});
+
 test("matches Hermes active-skill discovery semantics", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-hermes-scan-"));
   const hermesHome = path.join(temporary, ".hermes");

@@ -13,12 +13,27 @@ export function riskSignals(component) {
   return RISK_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
 }
 
+export function analysisComponents(inventory) {
+  const components = inventory.components ?? [];
+  if (inventory.analysisScope === "session-visible") return components.filter((component) => component.lifecycle?.sessionVisible === true);
+  return components;
+}
+
 export function analyzeInventory(inventory) {
-  const components = inventory.components.filter((component) => component.kind === "skill");
+  const components = analysisComponents(inventory).filter((component) => component.kind === "skill");
   const findings = [];
   const coverage = { totalSkills: components.length, missingDescription: 0, missingTriggers: 0, missingTools: 0 };
+  const lifecycle = { discovered: 0, installed: 0, enabled: 0, sessionVisible: 0, unknownInstallation: 0, unknownEnabled: 0, unknownSessionVisibility: 0 };
   const riskInventory = {};
   for (const component of components) {
+    const state = component.lifecycle ?? {};
+    lifecycle.discovered += state.discovered === true ? 1 : 0;
+    lifecycle.installed += state.installed === true ? 1 : 0;
+    lifecycle.enabled += state.enabled === true ? 1 : 0;
+    lifecycle.sessionVisible += state.sessionVisible === true ? 1 : 0;
+    lifecycle.unknownInstallation += state.installed === null || state.installed === undefined ? 1 : 0;
+    lifecycle.unknownEnabled += state.enabled === null || state.enabled === undefined ? 1 : 0;
+    lifecycle.unknownSessionVisibility += state.sessionVisible === null || state.sessionVisible === undefined ? 1 : 0;
     const risks = riskSignals(component);
     if (!component.description) coverage.missingDescription += 1;
     if (component.triggers.length === 0) coverage.missingTriggers += 1;
@@ -38,5 +53,12 @@ export function analyzeInventory(inventory) {
     const hasWriteCollision = (right.writes ?? []).some((write) => leftWrites.has(write));
     if (sameName || overlap >= 0.55 || hasWriteCollision) findings.push({ type: sameName ? "duplicate_name" : hasWriteCollision ? "write_collision" : "semantic_overlap", severity: sameName || hasWriteCollision ? "high" : "medium", components: [left.id, right.id], overlap: Number(overlap.toFixed(3)), sharedTokens: shared, message: sameName ? "Skills from different sources share the same name." : hasWriteCollision ? "Skills declare overlapping write targets." : "Skills from different sources may compete for the same task context." });
   }
-  return { schemaVersion: "0.1", generatedAt: new Date().toISOString(), coverage, riskInventory, findings };
+  return {
+    schemaVersion: "0.2",
+    generatedAt: new Date().toISOString(),
+    analysisScope: inventory.analysisScope ?? "unknown",
+    coverage: { ...coverage, lifecycle },
+    riskInventory,
+    findings
+  };
 }

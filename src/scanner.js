@@ -9,10 +9,11 @@ import { opencodeRuntime } from "./runtimes/opencode.js";
 import { openclawRuntime } from "./runtimes/openclaw.js";
 
 const FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
-const COMMON_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
-const HERMES_EXCLUDED_DIRECTORIES = new Set([".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache"]);
-const CLAUDE_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
-const AGENT_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow"]);
+const TEMPORARY_OR_BUILD_DIRECTORIES = new Set([".review", ".smoke", ".worktree", ".worktrees", "worktree", "worktrees", "build", "dist", "out", "target", "coverage", ".next", ".turbo", ".tmp", "tmp"]);
+const COMMON_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow", ...TEMPORARY_OR_BUILD_DIRECTORIES]);
+const HERMES_EXCLUDED_DIRECTORIES = new Set([".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache", ...TEMPORARY_OR_BUILD_DIRECTORIES]);
+const CLAUDE_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow", ...TEMPORARY_OR_BUILD_DIRECTORIES]);
+const AGENT_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow", ...TEMPORARY_OR_BUILD_DIRECTORIES]);
 const SKILL_SUPPORT_DIRECTORIES = new Set(["references", "templates", "assets", "scripts"]);
 
 function parseScalar(value) {
@@ -148,13 +149,18 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime) {
     id: componentId("skill", directory, sourceRoot), kind: "skill", runtime, name, skillName,
     version: String(metadata.version ?? plugin?.version ?? "unversioned"), description,
     source: directory, plugin: plugin?.name ?? null, pluginVersion: plugin?.version ?? null,
+    lifecycle: lifecycle(),
     metadata, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
     reads: normalizedList(metadata.reads), writes: normalizedList(metadata.writes), tools: normalizedList(metadata.tools),
     sideEffects: normalizedList(metadata.side_effects ?? metadata.sideEffects), text, tokens: [...tokenize(text)], digest: digest(body)
   };
 }
 
-function syntheticSkill(entry, runtime) {
+function lifecycle({ installed = null, enabled = null, sessionVisible = null } = {}) {
+  return { discovered: true, installed, enabled, sessionVisible };
+}
+
+function syntheticSkill(entry, runtime, state = {}) {
   const name = String(entry.name);
   const description = String(entry.description ?? "");
   const source = String(entry.source ?? `${runtime}:runtime`);
@@ -163,19 +169,19 @@ function syntheticSkill(entry, runtime) {
   return {
     id: `${runtime}:skill:${digest(source).slice(0, 8)}:${name}`, kind: "skill", runtime, name, skillName: name,
     version: String(entry.version ?? "unversioned"), description, source, plugin: entry.plugin ?? null, pluginVersion: entry.pluginVersion ?? null,
-    metadata, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
+    metadata, lifecycle: lifecycle(state), triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
     reads: normalizedList(metadata.reads), writes: normalizedList(metadata.writes), tools: normalizedList(metadata.tools),
     sideEffects: normalizedList(metadata.side_effects ?? metadata.sideEffects), text, tokens: [...tokenize(text)], digest: digest(JSON.stringify(entry))
   };
 }
 
-function syntheticPlugin(entry, runtime) {
+function syntheticPlugin(entry, runtime, state = {}) {
   const name = String(entry.name);
   const source = String(entry.source ?? `${runtime}:plugin:${name}`);
   return {
     id: `${runtime}:plugin:${digest(source).slice(0, 8)}:${name}`, kind: "plugin", runtime, name,
     version: String(entry.version ?? "unversioned"), description: String(entry.description ?? ""), source,
-    manifest: null, metadata: entry.metadata ?? {}, skills: entry.skills ?? null, mcpServers: null, apps: null, hooks: null,
+    manifest: null, metadata: entry.metadata ?? {}, lifecycle: lifecycle(state), skills: entry.skills ?? null, mcpServers: null, apps: null, hooks: null,
     digest: digest(JSON.stringify(entry)), tokens: [...tokenize(`${name} ${entry.description ?? ""}`)]
   };
 }
@@ -244,11 +250,13 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
   const explicitSkillFiles = runtimeState?.authoritative && Array.isArray(runtimeState.skillFiles) ? runtimeState.skillFiles : null;
   const seenRuntimeNames = new Set();
 
-  for (const entry of runtimeState?.plugins ?? []) components.push(syntheticPlugin(entry, runtime));
+  const authoritative = runtimeState?.authoritative === true;
+  for (const entry of runtimeState?.plugins ?? []) components.push(syntheticPlugin(entry, runtime, { installed: true, enabled: true, sessionVisible: true }));
   if (explicitSkillFiles) {
     for (const skillFile of explicitSkillFiles) {
       const sourceRoot = uniqueRoots.find((root) => skillFile === root || skillFile.startsWith(`${root}${path.sep}`)) ?? path.dirname(skillFile);
       const skill = await readSkill(skillFile, null, sourceRoot, runtime);
+      skill.lifecycle = lifecycle({ installed: true, enabled: true, sessionVisible: true });
       if (seenRuntimeNames.has(skill.name)) continue;
       seenRuntimeNames.add(skill.name);
       skill.id = `${runtime}:${skill.id}`;
@@ -270,7 +278,10 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
         try { metadata = JSON.parse(await readFile(manifest, "utf8")); } catch { continue; }
         if (claude.disabledPlugins.has(`${metadata.name}@skills-dir`)) continue;
       }
-      for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime)) if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
+      for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime)) {
+        entry.lifecycle = lifecycle({ installed: authoritative ? true : null, enabled: authoritative ? true : null, sessionVisible: authoritative ? true : null });
+        if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
+      }
     }
     for (const skillFile of await walk(sourceRoot, (file) => path.basename(file) === "SKILL.md", [], walkOptions)) {
       if (components.some((entry) => entry.kind === "skill" && entry.source === path.dirname(skillFile))) continue;
@@ -289,6 +300,7 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
         seenRuntimeNames.add(skill.name);
         skill.id = `${sourceRuntime}:${skill.id}`;
       }
+      skill.lifecycle = lifecycle({ installed: authoritative ? true : null, enabled: authoritative ? true : null, sessionVisible: authoritative ? true : null });
       if (!seen.has(skill.id)) { seen.add(skill.id); components.push(skill); }
     }
   }
@@ -296,9 +308,17 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
     if (activeSkillNames && !activeSkillNames.has(String(entry.name))) continue;
     if (seenRuntimeNames.has(String(entry.name))) continue;
     seenRuntimeNames.add(String(entry.name));
-    components.push(syntheticSkill(entry, runtime));
+    components.push(syntheticSkill(entry, runtime, { installed: true, enabled: true, sessionVisible: true }));
   }
-  return { schemaVersion: "0.1", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd), roots: uniqueRoots, components: components.sort((a, b) => a.id.localeCompare(b.id)) };
+  return {
+    schemaVersion: "0.2",
+    generatedAt: new Date().toISOString(),
+    cwd: path.resolve(cwd),
+    roots: uniqueRoots,
+    authoritative: authoritative,
+    analysisScope: authoritative ? "session-visible" : "runtime-roots",
+    components: components.sort((a, b) => a.id.localeCompare(b.id))
+  };
 }
 
 async function adapterFor(runtime, options) {
@@ -306,15 +326,18 @@ async function adapterFor(runtime, options) {
   if (runtime === "pi") return piRuntime(options);
   if (runtime === "opencode") return opencodeRuntime(options);
   if (runtime === "openclaw") return openclawRuntime(options);
-  return { roots: defaultRoots({ ...options, runtime }), authoritative: false };
+  return { roots: defaultRoots({ ...options, runtime }), authoritative: runtime === "hermes" };
 }
 
 export async function scanRuntime({ runtime = "all", cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
   if (runtime === "all") {
     const inventories = await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw"].map((name) => scanRuntime({ runtime: name, cwd, home, hermesHome })));
     return {
-      schemaVersion: "0.1", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd),
-      roots: [...new Set(inventories.flatMap((item) => item.roots))], components: inventories.flatMap((item) => item.components).sort((a, b) => a.id.localeCompare(b.id))
+      schemaVersion: "0.2", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd),
+      roots: [...new Set(inventories.flatMap((item) => item.roots))],
+      authoritative: inventories.every((item) => item.authoritative === true),
+      analysisScope: inventories.every((item) => item.authoritative === true) ? "session-visible" : "runtime-roots",
+      components: inventories.flatMap((item) => item.components).sort((a, b) => a.id.localeCompare(b.id))
     };
   }
   const state = await adapterFor(runtime, { cwd, home, hermesHome });

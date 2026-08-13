@@ -7,6 +7,8 @@ description: Govern local AI skills and personal methods with OwnHow across Code
 
 Use the local `ownhow` CLI as the governance layer for the current agent runtime. It scans skills without executing their instructions, produces an explainable task plan, records real outcomes, and applies only explicitly approved Personal Method overlays.
 
+Treat filesystem discovery as candidates, not activation. Prefer inventories with `analysisScope: session-visible`; distinguish `discovered`, `installed`, `enabled`, and `sessionVisible` in reports. If the runtime adapter is not authoritative, say that install and current-session visibility are unknown and do not call a candidate an active Skill.
+
 ## Select the runtime
 
 Select the current agent runtime:

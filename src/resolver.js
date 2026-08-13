@@ -1,4 +1,5 @@
 import { riskSignals } from "./analyzer.js";
+import { analysisComponents } from "./analyzer.js";
 import { matchingTokens, overlapScore, tokenize } from "./text.js";
 
 function searchTokens(component) { return tokenize([component.name, component.description, ...(component.triggers ?? []), ...(component.metadata?.keywords ?? [])].join(" ")); }
@@ -8,11 +9,11 @@ function meetsSelectionThreshold(entry) { return entry.score >= 0.08 || (entry.s
 
 export function resolveTask(inventory, task, methods = []) {
   const taskTokens = tokenize(task);
-  const candidates = inventory.components.filter((component) => component.kind === "skill").map((component) => ({ component, score: scoreComponent(component, taskTokens), sharedTokens: matchingTokens(searchTokens(component), taskTokens), risks: riskSignals(component) })).sort((a, b) => b.score - a.score || a.component.id.localeCompare(b.component.id));
+  const candidates = analysisComponents(inventory).filter((component) => component.kind === "skill").map((component) => ({ component, score: scoreComponent(component, taskTokens), sharedTokens: matchingTokens(searchTokens(component), taskTokens), risks: riskSignals(component) })).sort((a, b) => b.score - a.score || a.component.id.localeCompare(b.component.id));
   const method = methods.find((entry) => overlapScore(tokenize(entry.task), taskTokens) >= 0.45);
   const selected = candidates.filter(meetsSelectionThreshold);
   const primary = selected[0] ?? null;
   const augment = selected.slice(1).filter((entry) => entry.score >= Math.max(0.12, (primary?.score ?? 0) * 0.55));
   const excluded = candidates.filter((entry) => !primary || entry.component.id !== primary.component.id).filter((entry) => !augment.some((item) => item.component.id === entry.component.id));
-  return { schemaVersion: "0.1", generatedAt: new Date().toISOString(), task, methodId: method?.id ?? null, primary: primary ? planEntry(primary) : null, augment: augment.map(planEntry), excluded: excluded.slice(0, 20).map(planEntry), risks: [...new Set([...selected.flatMap((entry) => entry.risks), ...(method?.risks ?? [])])], explanation: primary ? `Primary selected by deterministic overlap on ${primary.sharedTokens.join(", ") || "task context"}.` : "No Skill met the minimum deterministic match threshold.", correction: method?.correction ?? null };
+  return { schemaVersion: "0.2", generatedAt: new Date().toISOString(), analysisScope: inventory.analysisScope ?? "unknown", task, methodId: method?.id ?? null, primary: primary ? planEntry(primary) : null, augment: augment.map(planEntry), excluded: excluded.slice(0, 20).map(planEntry), risks: [...new Set([...selected.flatMap((entry) => entry.risks), ...(method?.risks ?? [])])], explanation: primary ? `Primary selected by deterministic overlap on ${primary.sharedTokens.join(", ") || "task context"}.` : "No Skill met the minimum deterministic match threshold.", correction: method?.correction ?? null };
 }

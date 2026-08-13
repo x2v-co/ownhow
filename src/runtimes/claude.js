@@ -83,6 +83,7 @@ export async function claudeRuntime({ cwd = process.cwd(), home = os.homedir() }
   const pluginRoots = await activePluginRoots({ home, cwd, settings });
   return {
     roots: [...new Set([...skillRoots, ...pluginRoots].map((root) => path.resolve(root)))],
+    authoritative: true,
     skillRoots: new Set(skillRoots.map((root) => path.resolve(root))),
     pluginRoots: new Set(pluginRoots),
     disabledSkills: new Set(Object.entries(settings.skillOverrides).filter(([, value]) => value === "off").map(([name]) => name)),
