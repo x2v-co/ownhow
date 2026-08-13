@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto";
 import { readJson, writeJson } from "./store.js";
 import { slugify } from "./text.js";
 
-export function createReceipt(task, outcome, correction, plan) {
+export function createReceipt(task, outcome, correction, plan, context = {}) {
   return {
     id: `receipt-${Date.now()}-${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
     task,
     outcome,
     correction: correction || null,
+    runtime: context.runtime ?? "unknown",
     plan: {
       methodId: plan.methodId,
       primary: plan.primary?.id ?? null,

@@ -1,4 +1,4 @@
 interface:
   display_name: "Govern Personal Methods"
-  short_description: "Scan, resolve, and improve local AI methods"
-  default_prompt: "Use $govern-personal-methods to inspect my local methods and resolve the current task."
+  short_description: "Govern, recover, and improve local AI methods"
+  default_prompt: "Use $govern-personal-methods to inspect my local methods or safely recover a remote Agent receipt."

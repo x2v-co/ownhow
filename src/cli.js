@@ -4,9 +4,10 @@ import path from "node:path";
 import { analyzeInventory } from "./analyzer.js";
 import { applyProposal, createProposal, createReceipt, saveProposal } from "./evolution.js";
 import { formatAnalysis, formatInventory, formatPlan } from "./format.js";
+import { acceptInboxEntry, createReceiptCapsule, importReceiptCapsule, rejectInboxEntry } from "./receipt-bundle.js";
 import { resolveTask } from "./resolver.js";
 import { runtimeRoots, scanRoots, scanRuntime } from "./scanner.js";
-import { appendReceipt, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
+import { appendReceipt, loadInbox, loadInboxEntry, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
 
 function parseArgs(argv) {
   const positional = [];
@@ -33,6 +34,9 @@ Usage:
   ownhow analyze [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
   ownhow resolve <task> [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
   ownhow record <task> --outcome success|failure [--correction TEXT] [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow export --receipt latest|ID --agent-id ID [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--state PATH] [--json]
+  ownhow import <capsule|-> [--state PATH] [--json]
+  ownhow inbox [show|accept|reject] [import-id] [--state PATH] [--json]
   ownhow propose [--receipt latest|ID] [--state PATH] [--json]
   ownhow apply <proposal-id> [--state PATH] [--json]
   ownhow status [--state PATH] [--json]
@@ -52,6 +56,28 @@ async function rootsFor(options) { return options.root?.map((root) => path.resol
 function sourceRuntimeFor(options) { return options.root && runtimeFor(options) !== "all" ? runtimeFor(options) : "auto"; }
 async function liveInventory(options) { return options.root ? scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) }) : scanRuntime({ runtime: runtimeFor(options) }); }
 async function inventoryFor(options, stateDir) { return options.cached ? loadInventory(stateDir) : liveInventory(options); }
+async function capsuleInput(positional) {
+  if (positional.length !== 1) throw new Error("A single receipt capsule or - for stdin is required.");
+  if (positional[0] !== "-") return positional[0];
+  process.stdin.setEncoding("utf8");
+  let input = "";
+  for await (const chunk of process.stdin) input += chunk;
+  return input;
+}
+
+function inboxSummary(entry) {
+  return {
+    id: entry.id,
+    status: entry.status,
+    importedAt: entry.importedAt,
+    source: entry.bundle.source,
+    task: entry.bundle.receipt.task,
+    outcome: entry.bundle.receipt.outcome,
+    correction: entry.bundle.receipt.correction,
+    warnings: entry.warnings,
+    acceptedReceiptId: entry.acceptedReceiptId ?? null
+  };
+}
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
@@ -78,10 +104,57 @@ async function main() {
     const plan = { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt };
     if (command === "resolve") { output(plan, options.json, formatPlan); return; }
     if (!['success', 'failure'].includes(options.outcome)) throw new Error("--outcome must be success or failure.");
-    const receipt = createReceipt(task, options.outcome, options.correction, plan);
+    const receipt = createReceipt(task, options.outcome, options.correction, plan, { runtime: runtimeFor(options) });
     await appendReceipt(stateDir, receipt);
     output(receipt, options.json, (value) => `Recorded ${value.id}\nOutcome: ${value.outcome}\nCorrection: ${value.correction ?? "none"}`);
     return;
+  }
+  if (command === "export") {
+    const receipts = await loadReceipts(stateDir);
+    const requested = options.receipt ?? "latest";
+    const receipt = requested === "latest" ? receipts.at(-1) : receipts.find((item) => item.id === requested);
+    if (!receipt) throw new Error("No matching receipt found.");
+    if (!options["agent-id"]) throw new Error("--agent-id is required.");
+    const exported = createReceiptCapsule(receipt, { agentId: options["agent-id"], runtime: options.runtime ?? receipt.runtime ?? "unknown" });
+    output(exported, options.json, (value) => value.capsule);
+    return;
+  }
+  if (command === "import") {
+    const imported = await importReceiptCapsule(stateDir, await capsuleInput(positional));
+    output({ ...inboxSummary(imported.entry), duplicate: imported.duplicate }, options.json,
+      (value) => `${value.duplicate ? "Already imported" : "Imported"} ${value.id} as ${value.status}\nSource: ${value.source.agentId} (${value.source.runtime})\nReview with: ownhow inbox show ${value.id}`);
+    return;
+  }
+  if (command === "inbox") {
+    const [action, entryId, ...extra] = positional;
+    if (!action) {
+      const entries = (await loadInbox(stateDir)).map(inboxSummary).sort((a, b) => b.importedAt.localeCompare(a.importedAt));
+      output(entries, options.json, (values) => values.length
+        ? values.map((value) => `${value.id}\t${value.status}\t${value.source.agentId}\t${value.outcome}\t${value.task}`).join("\n")
+        : "Inbox is empty.");
+      return;
+    }
+    if (!entryId || extra.length) throw new Error(`ownhow inbox ${action} requires exactly one import id.`);
+    if (action === "show") {
+      if (!/^import-[a-f0-9]{16,64}$/.test(entryId)) throw new Error("Invalid Inbox entry id.");
+      const entry = await loadInboxEntry(stateDir, entryId);
+      if (!entry) throw new Error(`Inbox entry not found: ${entryId}`);
+      output(inboxSummary(entry), options.json, (value) => `Import: ${value.id}\nStatus: ${value.status}\nSource: ${value.source.agentId} (${value.source.runtime}, unauthenticated)\nTask: ${value.task}\nOutcome: ${value.outcome}\nCorrection: ${value.correction ?? "none"}\nWarnings: ${value.warnings.join(" ")}`);
+      return;
+    }
+    if (action === "accept") {
+      const accepted = await acceptInboxEntry(stateDir, entryId);
+      output({ ...inboxSummary(accepted.entry), receiptId: accepted.receipt?.id ?? accepted.entry.acceptedReceiptId, duplicate: accepted.duplicate }, options.json,
+        (value) => `${value.duplicate ? "Already accepted" : "Accepted"} ${value.id}\nReceipt: ${value.receiptId}`);
+      return;
+    }
+    if (action === "reject") {
+      const rejected = await rejectInboxEntry(stateDir, entryId);
+      output({ ...inboxSummary(rejected.entry), duplicate: rejected.duplicate }, options.json,
+        (value) => `${value.duplicate ? "Already rejected" : "Rejected"} ${value.id}`);
+      return;
+    }
+    throw new Error("Inbox action must be show, accept, or reject.");
   }
   if (command === "propose") {
     const receipts = await loadReceipts(stateDir);
@@ -104,7 +177,8 @@ async function main() {
     const inventory = await loadInventory(stateDir).catch(() => null);
     const receipts = await loadReceipts(stateDir);
     const methods = await loadMethods(stateDir);
-    output({ stateDir, inventoryGeneratedAt: inventory?.generatedAt ?? null, components: inventory?.components.length ?? 0, receipts: receipts.length, methods: methods.length }, options.json, (value) => `State: ${value.stateDir}\nComponents: ${value.components}\nReceipts: ${value.receipts}\nPersonal Methods: ${value.methods}`);
+    const inbox = await loadInbox(stateDir);
+    output({ stateDir, inventoryGeneratedAt: inventory?.generatedAt ?? null, components: inventory?.components.length ?? 0, receipts: receipts.length, methods: methods.length, pendingImports: inbox.filter((entry) => entry.status === "pending").length }, options.json, (value) => `State: ${value.stateDir}\nComponents: ${value.components}\nReceipts: ${value.receipts}\nPending imports: ${value.pendingImports}\nPersonal Methods: ${value.methods}`);
     return;
   }
   throw new Error(`Unknown command: ${command}`);

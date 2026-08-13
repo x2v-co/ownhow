@@ -13,14 +13,14 @@ It does not upload source files, call a model, or modify installed Plugins and S
 Install the CLI directly from this repository:
 
 ```bash
-npm install --global github:x2v-co/ownhow#v0.4.1
+npm install --global github:x2v-co/ownhow#v0.5.0
 ownhow --help
 ```
 
 Add the OwnHow marketplace and install the Codex Plugin (optional):
 
 ```bash
-codex plugin marketplace add x2v-co/ownhow --ref v0.4.1
+codex plugin marketplace add x2v-co/ownhow --ref v0.5.0
 codex plugin add ownhow@x2v
 ```
 
@@ -31,7 +31,7 @@ Start a new Codex chat after installing the Plugin. The Plugin provides the gove
 Install the standalone Hermes Skill into the active Hermes profile:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.4.1/skills/ownhow-governance/SKILL.md --yes
+hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.5.0/skills/ownhow-governance/SKILL.md --yes
 ```
 
 The CLI discovers active Hermes skills under `~/.hermes/skills` automatically, following Hermes' archive, support-directory, platform, environment, disabled-skill, symlink, and duplicate-name discovery rules. Use `--runtime hermes` to keep analysis scoped to Hermes, or `--root PATH` for a custom `HERMES_HOME`/profile.
@@ -54,7 +54,7 @@ The static inventory includes project Skills active at session startup. Claude C
 Install OwnHow as a Pi Package:
 
 ```bash
-pi install git:github.com/x2v-co/ownhow@v0.4.1
+pi install git:github.com/x2v-co/ownhow@v0.5.0
 ```
 
 OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and `.agents` discovery, settings filters, symlink deduplication, and Package-contributed Skills. Use `--runtime pi` for Pi-only analysis.
@@ -64,7 +64,7 @@ OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and 
 Install the standalone Skill in OpenCode's global Skill directory:
 
 ```bash
-git clone --branch v0.4.1 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.5.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 ln -s ~/.local/share/ownhow/skills/ownhow-governance ~/.config/opencode/skills/ownhow-governance
 ```
 
@@ -75,7 +75,7 @@ OwnHow uses `opencode debug skill` as the authoritative live inventory when Open
 Install the standalone Skill globally:
 
 ```bash
-git clone --branch v0.4.1 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.5.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global --as ownhow-governance
 ```
 
@@ -119,6 +119,36 @@ ownhow resolve "review a merge request, fix findings, and verify the result"
 
 The second resolve includes the Personal Method correction. The original Plugin and Skill remain unchanged.
 
+## Recover receipts from remote Agents
+
+When a remote Agent cannot be reached through SSH, use the Agent-carried Receipt Bundle protocol. On the remote machine, record the observed outcome and export a minimal copyable capsule:
+
+```bash
+ownhow record "research customer onboarding" \
+  --outcome failure \
+  --correction "Cite the customer's observed workflow" \
+  --runtime hermes
+ownhow export --receipt latest --agent-id customer-research-a
+```
+
+The Agent should return the single `ownhow:receipt-bundle:v1:...` line through the existing chat. The capsule contains task metadata, not raw conversation, Skill bodies, inventories, full local paths, or traces. OwnHow redacts common path and credential patterns, but the remote user or Agent must still review customer-sensitive task and correction text before sharing.
+
+On the trusted primary machine, pass long capsules over stdin when possible:
+
+```bash
+ownhow import -
+ownhow inbox
+ownhow inbox show import-123
+ownhow inbox accept import-123
+ownhow propose --receipt receipt-imported-123
+```
+
+Import only creates a pending Inbox entry under `~/.ownhow/inbox/`. It cannot be used by `propose` until `inbox accept` explicitly appends a normalized local Receipt. Use `ownhow inbox reject <import-id>` to retain an audit record without accepting it.
+
+The SHA-256 digest detects transport corruption; it does not authenticate the remote Agent. Treat the Agent, chat, capsule, task, and correction as untrusted data. OwnHow validates a strict versioned schema and never executes imported text. The protocol is local-first and requires no OwnHow account or cloud service.
+
+See [Receipt Bundle Protocol v1](docs/receipt-bundle-v1.md) for the interoperable envelope and validation rules.
+
 ## Commands
 
 | Command | Purpose |
@@ -127,6 +157,9 @@ The second resolve includes the Personal Method correction. The original Plugin 
 | `analyze` | Detect duplicate names, semantic overlap, write collisions, missing metadata, and risk surfaces |
 | `resolve <task>` | Produce a deterministic task plan with selection reasons and approval risks |
 | `record <task>` | Save a local receipt with outcome and optional correction |
+| `export` | Export a minimal Receipt Bundle capsule for Agent-mediated recovery |
+| `import` | Validate a capsule and place it in the pending Inbox |
+| `inbox` | List, review, explicitly accept, or reject remote receipts |
 | `propose` | Create a reviewable Personal Method proposal from a corrected receipt |
 | `apply <id>` | Explicitly apply a proposal as a local overlay |
 | `status` | Show local inventory, receipt, and method counts |

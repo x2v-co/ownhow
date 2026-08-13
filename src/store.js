@@ -10,7 +10,8 @@ export async function ensureState(stateDir) {
   await Promise.all([
     mkdir(stateDir, { recursive: true }),
     mkdir(path.join(stateDir, "proposals"), { recursive: true }),
-    mkdir(path.join(stateDir, "methods"), { recursive: true })
+    mkdir(path.join(stateDir, "methods"), { recursive: true }),
+    mkdir(path.join(stateDir, "inbox"), { recursive: true })
   ]);
 }
 
@@ -68,6 +69,21 @@ export async function listJsonFiles(directory) {
 
 export async function loadMethods(stateDir) {
   const directory = path.join(stateDir, "methods");
+  const names = await listJsonFiles(directory);
+  return Promise.all(names.map((name) => readJson(path.join(directory, name))));
+}
+
+export async function saveInboxEntry(stateDir, entry) {
+  await ensureState(stateDir);
+  await writeJson(path.join(stateDir, "inbox", `${entry.id}.json`), entry);
+}
+
+export async function loadInboxEntry(stateDir, entryId) {
+  return readJson(path.join(stateDir, "inbox", `${entryId}.json`));
+}
+
+export async function loadInbox(stateDir) {
+  const directory = path.join(stateDir, "inbox");
   const names = await listJsonFiles(directory);
   return Promise.all(names.map((name) => readJson(path.join(directory, name))));
 }
