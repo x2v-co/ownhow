@@ -6,6 +6,7 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import {
   acceptInboxEntry,
   CAPSULE_PREFIX,
+  CAPSULE_V2_PREFIX,
   createReceiptCapsule,
   importReceiptCapsule,
   parseReceiptCapsule,
@@ -43,11 +44,47 @@ test("exports a minimal parseable capsule without local component identifiers", 
   assert.doesNotMatch(JSON.stringify(envelope), /private-method|\/Users\/customer|SKILL\.md/);
 });
 
+test("exports evidence-rich v2 capsules and preserves verified details", () => {
+  const exported = createReceiptCapsule(receipt({
+    details: {
+      summary: "Fixed the timeout and verified the login flow.",
+      evidence: ["npm test: 42 passed"],
+      artifacts: ["src/auth.js"],
+      blockers: [],
+      confidence: "high",
+      verifiedBy: "user"
+    }
+  }), { agentId: "agent-a", runtime: "codex", protocolVersion: 2 });
+  assert.match(exported.capsule, new RegExp(`^${CAPSULE_V2_PREFIX}`));
+  const envelope = parseReceiptCapsule(exported.capsule);
+  assert.equal(envelope.version, 2);
+  assert.equal(envelope.receipt.details.summary, "Fixed the timeout and verified the login flow.");
+  assert.deepEqual(envelope.receipt.details.evidence, ["npm test: 42 passed"]);
+  assert.equal(envelope.receipt.details.confidence, "high");
+  assert.equal(envelope.receipt.details.verifiedBy, "user");
+});
+
 test("redacts filesystem paths and credential-like values before export", () => {
   const exported = createReceiptCapsule(receipt({
     task: "Inspect /home/ubuntu/customer-notes.txt",
     correction: "Use api_key=sk-abcdefghijklmnopqrstuvwxyz1234 before /Users/alice/project"
   }), { agentId: "agent-a", runtime: "hermes" });
+  const serialized = JSON.stringify(exported.envelope);
+  assert.doesNotMatch(serialized, /customer-notes|abcdefghijklmnopqrstuvwxyz|\/Users\/alice/);
+  assert.deepEqual(exported.envelope.privacy.redactions, ["credential-like-value", "filesystem-path"]);
+});
+
+test("redacts sensitive patterns from v2 verification details", () => {
+  const exported = createReceiptCapsule(receipt({
+    details: {
+      summary: "Reviewed /home/ubuntu/customer-notes.txt",
+      evidence: ["Used api_key=sk-abcdefghijklmnopqrstuvwxyz1234"],
+      artifacts: ["/Users/alice/project/report.md"],
+      blockers: [],
+      confidence: "medium",
+      verifiedBy: "agent"
+    }
+  }), { agentId: "agent-a", runtime: "hermes", protocolVersion: 2 });
   const serialized = JSON.stringify(exported.envelope);
   assert.doesNotMatch(serialized, /customer-notes|abcdefghijklmnopqrstuvwxyz|\/Users\/alice/);
   assert.deepEqual(exported.envelope.privacy.redactions, ["credential-like-value", "filesystem-path"]);

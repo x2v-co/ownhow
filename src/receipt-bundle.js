@@ -2,9 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendReceipt, loadInbox, loadInboxEntry, loadReceipts, saveInboxEntry } from "./store.js";
 
 export const CAPSULE_PREFIX = "ownhow:receipt-bundle:v1:";
+export const CAPSULE_V2_PREFIX = "ownhow:receipt-bundle:v2:";
 const MAX_CAPSULE_BYTES = 256 * 1024;
 const OUTCOMES = new Set(["success", "failure"]);
 const RUNTIMES = new Set(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "all", "unknown"]);
+const CONFIDENCE = new Set(["low", "medium", "high", "unknown"]);
+const VERIFIED_BY = new Set(["user", "agent", "automated", "unknown"]);
 
 function validateInboxId(entryId) {
   if (typeof entryId !== "string" || !/^import-[a-f0-9]{16,64}$/.test(entryId)) throw new Error("Invalid Inbox entry id.");
@@ -73,9 +76,25 @@ function redact(value, redactions) {
   return output;
 }
 
-function exportReceipt(receipt, redactions) {
-  const plan = receipt.plan ?? {};
+function exportDetails(receipt, redactions) {
+  const details = receipt.details ?? {};
+  const confidence = details.confidence ?? "unknown";
+  const verifiedBy = details.verifiedBy ?? "unknown";
+  if (!CONFIDENCE.has(confidence)) throw new Error("receipt.details.confidence is unsupported.");
+  if (!VERIFIED_BY.has(verifiedBy)) throw new Error("receipt.details.verifiedBy is unsupported.");
   return {
+    summary: details.summary === null || details.summary === undefined ? null : redact(textValue(details.summary, "receipt.details.summary"), redactions),
+    evidence: stringArray(details.evidence ?? [], "receipt.details.evidence", 32).map((item) => redact(item, redactions)),
+    artifacts: stringArray(details.artifacts ?? [], "receipt.details.artifacts", 32).map((item) => redact(item, redactions)),
+    blockers: stringArray(details.blockers ?? [], "receipt.details.blockers", 32).map((item) => redact(item, redactions)),
+    confidence,
+    verifiedBy
+  };
+}
+
+function exportReceipt(receipt, redactions, protocolVersion) {
+  const plan = receipt.plan ?? {};
+  const exported = {
     id: textValue(receipt.id, "receipt.id", { max: 256 }),
     createdAt: isoDate(receipt.createdAt, "receipt.createdAt"),
     task: redact(textValue(receipt.task, "receipt.task"), redactions),
@@ -88,26 +107,29 @@ function exportReceipt(receipt, redactions) {
       risks: stringArray(plan.risks ?? [], "receipt.plan.risks").map((item) => redact(item, redactions))
     }
   };
+  if (protocolVersion === 2) exported.details = exportDetails(receipt, redactions);
+  return exported;
 }
 
-export function createReceiptCapsule(receipt, { agentId, runtime } = {}) {
+export function createReceiptCapsule(receipt, { agentId, runtime, protocolVersion = 1 } = {}) {
+  if (![1, 2].includes(protocolVersion)) throw new Error("Receipt capsule protocol version must be 1 or 2.");
   const redactions = new Set();
   const safeAgentId = redact(textValue(agentId, "agentId", { max: 256 }), redactions);
   const safeRuntime = runtime ?? receipt.runtime ?? "unknown";
-  if (!RUNTIMES.has(safeRuntime)) throw new Error("runtime is not supported by receipt-bundle v1.");
+  if (!RUNTIMES.has(safeRuntime)) throw new Error("runtime is not supported by the Receipt Bundle protocol.");
   if (!OUTCOMES.has(receipt.outcome)) throw new Error("receipt.outcome must be success or failure.");
   const envelope = {
     protocol: "ownhow.receipt-bundle",
-    version: 1,
+    version: protocolVersion,
     bundleId: `bundle-${Date.now()}-${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
     source: { agentId: safeAgentId, runtime: safeRuntime },
-    receipt: exportReceipt(receipt, redactions),
+    receipt: exportReceipt(receipt, redactions, protocolVersion),
     privacy: { redactions: [...redactions].sort() }
   };
   envelope.digest = digestFor(envelope);
   return {
-    capsule: `${CAPSULE_PREFIX}${Buffer.from(canonicalJson(envelope), "utf8").toString("base64url")}`,
+    capsule: `${protocolVersion === 2 ? CAPSULE_V2_PREFIX : CAPSULE_PREFIX}${Buffer.from(canonicalJson(envelope), "utf8").toString("base64url")}`,
     envelope
   };
 }
@@ -116,8 +138,10 @@ export function parseReceiptCapsule(input) {
   if (typeof input !== "string") throw new Error("Receipt capsule must be text.");
   if (Buffer.byteLength(input, "utf8") > MAX_CAPSULE_BYTES) throw new Error("Receipt capsule is too large.");
   const capsule = input.trim();
-  if (!capsule.startsWith(CAPSULE_PREFIX)) throw new Error("Invalid receipt capsule prefix or unsupported version.");
-  const encoded = capsule.slice(CAPSULE_PREFIX.length);
+  const protocolVersion = capsule.startsWith(CAPSULE_V2_PREFIX) ? 2 : capsule.startsWith(CAPSULE_PREFIX) ? 1 : null;
+  if (!protocolVersion) throw new Error("Invalid receipt capsule prefix or unsupported version.");
+  const prefix = protocolVersion === 2 ? CAPSULE_V2_PREFIX : CAPSULE_PREFIX;
+  const encoded = capsule.slice(prefix.length);
   if (!encoded || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error("Receipt capsule payload is not valid base64url.");
   let envelope;
   try {
@@ -126,13 +150,15 @@ export function parseReceiptCapsule(input) {
     throw new Error("Receipt capsule payload is not valid JSON.");
   }
   exactKeys(envelope, ["protocol", "version", "bundleId", "createdAt", "source", "receipt", "privacy", "digest"], "envelope");
-  if (envelope.protocol !== "ownhow.receipt-bundle" || envelope.version !== 1) throw new Error("Unsupported receipt-bundle protocol or version.");
+  if (envelope.protocol !== "ownhow.receipt-bundle" || envelope.version !== protocolVersion) throw new Error("Unsupported receipt-bundle protocol or version.");
   textValue(envelope.bundleId, "bundleId", { max: 256 });
   isoDate(envelope.createdAt, "createdAt");
   exactKeys(envelope.source, ["agentId", "runtime"], "source");
   textValue(envelope.source.agentId, "source.agentId", { max: 256 });
   if (!RUNTIMES.has(envelope.source.runtime)) throw new Error("source.runtime is unsupported.");
-  exactKeys(envelope.receipt, ["id", "createdAt", "task", "outcome", "correction", "plan"], "receipt");
+  const receiptKeys = ["id", "createdAt", "task", "outcome", "correction", "plan"];
+  if (protocolVersion === 2) receiptKeys.push("details");
+  exactKeys(envelope.receipt, receiptKeys, "receipt");
   textValue(envelope.receipt.id, "receipt.id", { max: 256 });
   isoDate(envelope.receipt.createdAt, "receipt.createdAt");
   textValue(envelope.receipt.task, "receipt.task");
@@ -142,6 +168,15 @@ export function parseReceiptCapsule(input) {
   for (const key of ["methodId", "primary"]) textValue(envelope.receipt.plan[key], `receipt.plan.${key}`, { nullable: true, max: 256 });
   stringArray(envelope.receipt.plan.augment, "receipt.plan.augment");
   stringArray(envelope.receipt.plan.risks, "receipt.plan.risks");
+  if (protocolVersion === 2) {
+    exactKeys(envelope.receipt.details, ["summary", "evidence", "artifacts", "blockers", "confidence", "verifiedBy"], "receipt.details");
+    textValue(envelope.receipt.details.summary, "receipt.details.summary", { nullable: true });
+    stringArray(envelope.receipt.details.evidence, "receipt.details.evidence", 32);
+    stringArray(envelope.receipt.details.artifacts, "receipt.details.artifacts", 32);
+    stringArray(envelope.receipt.details.blockers, "receipt.details.blockers", 32);
+    if (!CONFIDENCE.has(envelope.receipt.details.confidence)) throw new Error("receipt.details.confidence is unsupported.");
+    if (!VERIFIED_BY.has(envelope.receipt.details.verifiedBy)) throw new Error("receipt.details.verifiedBy is unsupported.");
+  }
   exactKeys(envelope.privacy, ["redactions"], "privacy");
   stringArray(envelope.privacy.redactions, "privacy.redactions", 16);
   if (!/^sha256:[a-f0-9]{64}$/.test(envelope.digest) || envelope.digest !== digestFor(envelope)) throw new Error("Receipt capsule digest does not match its payload.");
@@ -151,7 +186,7 @@ export function parseReceiptCapsule(input) {
 function warningsFor(envelope) {
   return [
     "Source identity is not authenticated; the digest verifies transport integrity only.",
-    "Review task and correction for customer or confidential data before accepting.",
+    "Review all Receipt text for customer or confidential data before accepting.",
     ...envelope.privacy.redactions.map((category) => `Exporter redacted: ${category}.`)
   ];
 }
@@ -189,7 +224,8 @@ export async function acceptInboxEntry(stateDir, entryId) {
   if (!entry) throw new Error(`Inbox entry not found: ${entryId}`);
   if (entry.status === "rejected") throw new Error(`Inbox entry was rejected: ${entryId}`);
   if (entry.status === "accepted") return { entry, receipt: (await loadReceipts(stateDir)).find((item) => item.id === entry.acceptedReceiptId), duplicate: true };
-  const bundle = parseReceiptCapsule(`${CAPSULE_PREFIX}${Buffer.from(canonicalJson(entry.bundle), "utf8").toString("base64url")}`);
+  const capsulePrefix = entry.bundle.version === 2 ? CAPSULE_V2_PREFIX : CAPSULE_PREFIX;
+  const bundle = parseReceiptCapsule(`${capsulePrefix}${Buffer.from(canonicalJson(entry.bundle), "utf8").toString("base64url")}`);
   const receiptId = `receipt-imported-${bundle.digest.slice("sha256:".length, "sha256:".length + 16)}`;
   const receipts = await loadReceipts(stateDir);
   let receipt = receipts.find((item) => item.id === receiptId || item.provenance?.bundleId === bundle.bundleId || item.provenance?.digest === bundle.digest);
@@ -200,6 +236,14 @@ export async function acceptInboxEntry(stateDir, entryId) {
       task: bundle.receipt.task,
       outcome: bundle.receipt.outcome,
       correction: bundle.receipt.correction,
+      details: bundle.receipt.details ?? {
+        summary: null,
+        evidence: [],
+        artifacts: [],
+        blockers: [],
+        confidence: "unknown",
+        verifiedBy: "unknown"
+      },
       plan: bundle.receipt.plan,
       runtime: bundle.source.runtime,
       provenance: {

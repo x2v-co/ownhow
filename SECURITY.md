@@ -23,12 +23,13 @@ OwnHow treats scanned Plugin and Skill content as untrusted data. Reports derive
 
 ## Remote Receipt Bundles
 
-The `ownhow:receipt-bundle:v1:` capsule is an untrusted copy-and-paste transport for remote Agent task metadata. Its SHA-256 digest detects payload changes after export, but does not authenticate the Agent, machine, user, or conversation.
+The `ownhow:receipt-bundle:v1:` and `ownhow:receipt-bundle:v2:` capsules are untrusted copy-and-paste transports for remote Agent task metadata. Their SHA-256 digest detects payload changes after export, but does not authenticate the Agent, machine, user, or conversation. v2 additionally carries a summary, evidence, artifacts, blockers, confidence, and a self-asserted verifier label.
 
 - Import writes only to the pending Inbox; explicit `inbox accept` is required before a Receipt enters the evolution flow.
 - Imported text is validated as data and is never executed as a command or Agent instruction.
 - The v1 schema rejects unknown fields, unsupported versions, oversized values, malformed timestamps, terminal control characters, and digest mismatches.
-- Export omits raw conversations, inventories, Skill bodies, traces, and local component identifiers. It redacts common path and credential patterns, but cannot guarantee removal of all confidential data.
+- Export omits raw conversations, inventories, Skill bodies, traces, and local component identifiers. It redacts common path and credential patterns across task details, but cannot guarantee removal of all confidential data.
+- Export selects local Receipts by default. Re-exporting an imported Receipt requires explicit source selection and an explicit re-export flag to reduce accidental source relabeling.
 - Review the source label, task, correction, redaction notices, and customer confidentiality before accepting. A source `agentId` is a self-asserted label, not verified identity.
 - Duplicate bundle, digest, and source Receipt IDs are imported idempotently. Rejected imports remain as local audit records rather than being deleted.
 

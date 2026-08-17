@@ -4,6 +4,7 @@ import { readJson, writeJson } from "./store.js";
 import { slugify } from "./text.js";
 
 export function createReceipt(task, outcome, correction, plan, context = {}) {
+  const list = (value) => Array.isArray(value) ? value.filter(Boolean).map(String) : [];
   return {
     id: `receipt-${Date.now()}-${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
@@ -11,6 +12,14 @@ export function createReceipt(task, outcome, correction, plan, context = {}) {
     outcome,
     correction: correction || null,
     runtime: context.runtime ?? "unknown",
+    details: {
+      summary: context.summary || null,
+      evidence: list(context.evidence),
+      artifacts: list(context.artifacts),
+      blockers: list(context.blockers),
+      confidence: context.confidence ?? "unknown",
+      verifiedBy: context.verifiedBy ?? "unknown"
+    },
     plan: {
       methodId: plan.methodId,
       primary: plan.primary?.id ?? null,

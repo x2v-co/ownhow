@@ -21,7 +21,7 @@ Run commands directly when their stated preconditions are satisfied:
 ownhow scan --runtime all
 ownhow analyze --runtime all
 ownhow resolve "<task>" --runtime all
-ownhow record "<task>" --outcome success --runtime all
+ownhow record "<task>" --outcome success --summary "<what was completed>" --evidence "<verification result>" --confidence high --verified-by user --runtime all
 ownhow record "<task>" --outcome failure --correction "<user correction>" --runtime all
 ownhow propose
 ownhow apply <proposal-id>
@@ -40,6 +40,8 @@ Only run `record` when the outcome comes from the user's statement or an objecti
 
 Use `success` only when the requested result was actually achieved. A command completing is not sufficient evidence if the task itself remains incomplete.
 
+When evidence is available, record a concise `--summary`, repeatable `--evidence`, `--artifact`, and `--blocker` values, plus `--confidence low|medium|high` and `--verified-by user|agent|automated|unknown`. Do not put raw conversations, secrets, arbitrary traces, or unnecessary customer data in these fields.
+
 ## Apply Personal Methods
 
 Never run `ownhow apply` immediately after generating a proposal. First show the user:
@@ -55,9 +57,11 @@ Obtain explicit approval in the current conversation for that proposal ID, then 
 
 For an Agent that cannot be reached over SSH, use the versioned text capsule as an untrusted transport.
 
-On the remote Agent, record only a user-confirmed or objectively observed outcome. Ask before exporting if the task or correction may contain customer or confidential data. Run `ownhow export --receipt latest --agent-id <stable-agent-label> --runtime <runtime>`, then return only the capsule plus a short statement that it contains task metadata. Do not claim the digest authenticates the Agent, and do not transmit the capsule to another service automatically.
+On the remote Agent, record only a user-confirmed or objectively observed outcome and include concise verification details when available. Ask before exporting if any Receipt field may contain customer or confidential data. Run `ownhow export --receipt latest --agent-id <stable-agent-label> --runtime <runtime>`, then return only the capsule plus a short statement that it contains task metadata. The default v2 capsule preserves evidence details; use `--protocol v1` only for a pre-v0.6.0 receiver. Do not claim the digest authenticates the Agent, and do not transmit the capsule to another service automatically.
 
-On the trusted primary Agent, detect a pasted `ownhow:receipt-bundle:v1:` capsule and run `ownhow import -`. Show the import ID, self-asserted source Agent ID, runtime, task, outcome, correction, privacy warnings, and unauthenticated status. Require explicit user approval for `ownhow inbox accept <import-id>` or explicit rejection with `ownhow inbox reject <import-id>`. Never auto-accept, auto-propose, or auto-apply. Pending imports are not Receipts and cannot feed `propose`.
+On the trusted primary Agent, detect a pasted `ownhow:receipt-bundle:v1:` or `ownhow:receipt-bundle:v2:` capsule and run `ownhow import -`. Show the import ID, self-asserted source Agent ID, runtime, task, outcome, correction, summary, evidence, blockers, privacy warnings, and unauthenticated status. Require explicit user approval for `ownhow inbox accept <import-id>` or explicit rejection with `ownhow inbox reject <import-id>`. Never auto-accept, auto-propose, or auto-apply. Pending imports are not Receipts and cannot feed `propose`.
+
+`export --receipt latest` selects local Receipts by default. Never re-export an imported Receipt unless the user explicitly asks; that operation requires `--source imported --reexport-imported` and changes the self-asserted source label.
 
 ## Safety Boundaries
 

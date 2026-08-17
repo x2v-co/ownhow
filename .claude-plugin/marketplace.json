@@ -10,7 +10,7 @@
       "name": "ownhow",
       "source": "./plugins/ownhow",
       "description": "Inspect, select, and improve the local AI methods you own.",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "author": {
         "name": "x2v-co",
         "email": "lgc.329@gmail.com"

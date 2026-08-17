@@ -7,6 +7,7 @@ import os from "node:os";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { appendReceipt, loadReceipts } from "../src/store.js";
+import { parseReceiptCapsule } from "../src/receipt-bundle.js";
 
 const exec = promisify(execFile);
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -109,7 +110,7 @@ test("round-trips a remote receipt through the pending inbox before proposal", a
     });
     const exported = await exec(process.execPath, [cli, "export", "--receipt", "latest", "--agent-id", "research-agent", "--state", state]);
     assert.equal(exported.stdout.trim().split("\n").length, 1);
-    assert.match(exported.stdout, /^ownhow:receipt-bundle:v1:/);
+    assert.match(exported.stdout, /^ownhow:receipt-bundle:v2:/);
 
     await rm(state, { recursive: true, force: true });
     const imported = await execWithInput(process.execPath, [cli, "import", "-", "--state", state, "--json"], exported.stdout);
@@ -123,6 +124,54 @@ test("round-trips a remote receipt through the pending inbox before proposal", a
     const acceptedReceiptId = JSON.parse(accepted.stdout).receiptId;
     const proposed = await exec(process.execPath, [cli, "propose", "--receipt", acceptedReceiptId, "--state", state, "--json"]);
     assert.equal(JSON.parse(proposed.stdout).correction, "Cite the customer's exact observed workflow");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("records evidence and keeps latest export scoped to local receipts", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-cli-evidence-test-"));
+  const state = path.join(temporary, "state");
+  const cli = path.join(root, "src", "cli.js");
+  try {
+    const recorded = await exec(process.execPath, [
+      cli, "record", "verify login fix", "--outcome", "success", "--runtime", "codex",
+      "--summary", "Login flow verified", "--evidence", "npm test: 42 passed", "--artifact", "src/auth.js",
+      "--confidence", "high", "--verified-by", "user", "--state", state, "--json"
+    ]);
+    const receipt = JSON.parse(recorded.stdout);
+    assert.equal(receipt.details.summary, "Login flow verified");
+    assert.deepEqual(receipt.details.evidence, ["npm test: 42 passed"]);
+
+    const remote = await exec(process.execPath, [
+      cli, "export", "--receipt", receipt.id, "--agent-id", "remote-a", "--runtime", "codex", "--protocol", "v2", "--state", state
+    ]);
+    await execWithInput(process.execPath, [cli, "import", "-", "--state", state, "--json"], remote.stdout);
+    const inbox = JSON.parse((await exec(process.execPath, [cli, "inbox", "--state", state, "--json"])).stdout);
+    const shown = JSON.parse((await exec(process.execPath, [cli, "inbox", "show", inbox[0].id, "--state", state, "--json"])).stdout);
+    assert.equal(shown.sourceAuthenticated, false);
+    assert.equal(shown.details.summary, "Login flow verified");
+    assert.deepEqual(shown.details.evidence, ["npm test: 42 passed"]);
+    const accepted = await exec(process.execPath, [cli, "inbox", "accept", inbox[0].id, "--state", state, "--json"]);
+    const importedId = JSON.parse(accepted.stdout).receiptId;
+    const acceptedReceipt = (await loadReceipts(state)).find((item) => item.id === importedId);
+    assert.equal(acceptedReceipt.details.summary, "Login flow verified");
+    assert.deepEqual(acceptedReceipt.details.evidence, ["npm test: 42 passed"]);
+    await assert.rejects(exec(process.execPath, [cli, "export", "--receipt", importedId, "--agent-id", "local-a", "--state", state]), /Refusing to re-export/);
+    await assert.rejects(exec(process.execPath, [cli, "export", "--receipt", importedId, "--agent-id", "local-a", "--reexport-imported", "--state", state]), /Use --source imported/);
+    const reexported = await exec(process.execPath, [cli, "export", "--receipt", importedId, "--agent-id", "relay-a", "--source", "imported", "--reexport-imported", "--state", state]);
+    assert.match(reexported.stdout, /^ownhow:receipt-bundle:v2:/);
+    const localExport = await exec(process.execPath, [cli, "export", "--agent-id", "local-a", "--state", state]);
+    assert.match(localExport.stdout, /^ownhow:receipt-bundle:v2:/);
+
+    await appendReceipt(state, {
+      id: "receipt-hermes-newer", createdAt: "2026-08-17T03:00:00.000Z", task: "newer Hermes task",
+      outcome: "success", correction: null, runtime: "hermes", plan: { methodId: null, primary: null, augment: [], risks: [] }
+    });
+    const codexExport = await exec(process.execPath, [cli, "export", "--agent-id", "local-a", "--runtime", "codex", "--state", state]);
+    const codexBundle = parseReceiptCapsule(codexExport.stdout);
+    assert.equal(codexBundle.source.runtime, "codex");
+    assert.equal(codexBundle.receipt.task, "verify login fix");
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

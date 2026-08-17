@@ -33,6 +33,8 @@ ownhow record "<task>" --outcome failure --correction "<user correction>" --runt
 ownhow propose
 ```
 
+When evidence is available, add a concise `--summary`, repeatable `--evidence`, `--artifact`, and `--blocker` values, plus `--confidence low|medium|high` and `--verified-by user|agent|automated|unknown`. Never include raw conversations, secrets, arbitrary traces, or unnecessary customer data.
+
 Show the proposal ID, correction, and risks before applying it. Apply only after the user explicitly approves that proposal ID:
 
 ```bash
@@ -49,9 +51,9 @@ When running as a remote Agent without SSH access, record only a user-confirmed 
 ownhow export --receipt latest --agent-id <stable-agent-label> --runtime <runtime>
 ```
 
-Return the single `ownhow:receipt-bundle:v1:...` capsule with a short statement that it contains task metadata. Do not claim it authenticates this Agent, and do not send it to any external service automatically.
+Return the single `ownhow:receipt-bundle:v2:...` capsule with a short statement that it contains task metadata and verification evidence. Use `--protocol v1` only for a pre-v0.6.0 receiver. Do not claim it authenticates this Agent, and do not send it to any external service automatically.
 
-When a user pastes a Receipt Bundle on the trusted primary Agent, import it into the pending Inbox and show its source label, runtime, task, outcome, correction, privacy warnings, and unauthenticated status:
+When a user pastes a v1 or v2 Receipt Bundle on the trusted primary Agent, import it into the pending Inbox and show its source label, runtime, task, outcome, correction, summary, evidence, blockers, privacy warnings, and unauthenticated status:
 
 ```bash
 ownhow import -
@@ -59,6 +61,8 @@ ownhow inbox show <import-id>
 ```
 
 Require the user to explicitly accept or reject that import ID. Never accept, propose, or apply automatically. Only an accepted Receipt may proceed through `ownhow propose --receipt <receipt-id>`.
+
+`export --receipt latest` selects local Receipts by default. Never re-export an imported Receipt unless the user explicitly asks; that operation requires `--source imported --reexport-imported` and changes the self-asserted source label.
 
 ## Safety
 
