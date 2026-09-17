@@ -33,6 +33,8 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   assert.equal(claudeMarketplace.plugins[0].source, "./plugins/ownhow");
   assert.equal(claudeMarketplace.plugins[0].version, packageMetadata.version);
   assert.equal(skill.name, "govern-personal-methods");
+  assert.equal(skill.version, packageMetadata.version);
+  assert.equal(hermesSkill.version, packageMetadata.version);
   assert.match(skill.description, /OwnHow CLI/);
   assert.equal(hermesSkill.name, "ownhow-governance");
   assert.match(hermesSkill.description, /Hermes/);

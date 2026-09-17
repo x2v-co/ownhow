@@ -2,12 +2,13 @@
 import process from "node:process";
 import path from "node:path";
 import { analyzeInventory } from "./analyzer.js";
-import { applyProposal, createProposal, createReceipt, saveProposal } from "./evolution.js";
+import { rollbackMethod, applyProposal, createProposal, createReceipt, saveProposal } from "./evolution.js";
 import { formatAnalysis, formatInventory, formatPlan } from "./format.js";
 import { acceptInboxEntry, createReceiptCapsule, importReceiptCapsule, rejectInboxEntry } from "./receipt-bundle.js";
-import { resolveTask } from "./resolver.js";
+import { planDigest, resolveTask } from "./resolver.js";
+import { upgrade } from "./upgrade.js";
 import { runtimeRoots, scanRoots, scanRuntime } from "./scanner.js";
-import { appendReceipt, loadInbox, loadInboxEntry, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
+import { appendReceipt, readJson, writeJson, loadInbox, loadInboxEntry, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
 
 function parseArgs(argv) {
   const positional = [];
@@ -17,7 +18,7 @@ function parseArgs(argv) {
     const value = argv[index];
     if (!value.startsWith("--")) { positional.push(value); continue; }
     const key = value.slice(2);
-    if (["json", "help", "cached", "reexport-imported"].includes(key)) { options[key] = true; continue; }
+    if (["json", "help", "cached", "reexport-imported", "apply", "check", "auto", "enable-auto", "disable-auto", "recover"].includes(key)) { options[key] = true; continue; }
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) throw new Error(`Missing value for --${key}`);
     index += 1;
@@ -32,32 +33,61 @@ function help() {
   return `OwnHow MVP - local governance for personal AI methods
 
 Usage:
-  ownhow scan [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--state PATH] [--json]
-  ownhow analyze [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow resolve <task> [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow record <task> --outcome success|failure [--correction TEXT] [--summary TEXT] [--evidence TEXT] [--artifact PATH] [--blocker TEXT] [--confidence low|medium|high] [--verified-by user|agent|automated|unknown] [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow export --receipt latest|ID --agent-id ID [--source local|imported|all] [--reexport-imported] [--protocol v1|v2] [--runtime codex|hermes|claude|pi|opencode|openclaw|all] [--state PATH] [--json]
+  ownhow scan [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--state PATH] [--json]
+  ownhow analyze [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow resolve <task> [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow record <task> --outcome success|failure [--correction TEXT] [--summary TEXT] [--evidence TEXT] [--artifact PATH] [--blocker TEXT] [--confidence low|medium|high] [--verified-by user|agent|automated|unknown] [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow export --receipt latest|ID --agent-id ID [--source local|imported|all] [--reexport-imported] [--protocol v1|v2] [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--state PATH] [--json]
   ownhow import <capsule|-> [--state PATH] [--json]
-  ownhow inbox [show|accept|reject] [import-id] [--state PATH] [--json]
+  ownhow inbox [list|show|accept|reject] [import-id] [--state PATH] [--json]
   ownhow propose [--receipt latest|ID] [--state PATH] [--json]
   ownhow apply <proposal-id> [--state PATH] [--json]
   ownhow status [--state PATH] [--json]
+  ownhow doctor --runtime RUNTIME [--root PATH] [--json]
+  ownhow methods [--state PATH] [--json]
+  ownhow rollback <method-id> --version VERSION [--state PATH] [--json]
+  ownhow upgrade --check [--version VERSION|--notice NOTICE] [--install-dir PATH] [--skill-dir PATH] [--json]
+  ownhow upgrade --apply [--version VERSION|--notice NOTICE] [--install-dir PATH] [--skill-dir PATH] [--json]
+  ownhow upgrade --enable-auto|--disable-auto [--install-dir PATH] [--skill-dir PATH] [--json]
+  ownhow upgrade --auto [--notice NOTICE] [--json]
+  ownhow upgrade --recover [--json]
+
+Resolve: --save-plan PATH writes a reviewable execution plan (opt-in).
+Record: --plan PATH binds the actual plan; --method-use loaded|followed|unknown
+        --sample-kind business|demo|workflow-test|unknown labels evidence.
+Scans: --session-manifest PATH reads {runtime, skillFiles: [absolute paths]} supplied by the host.
 
 Analyze and resolve use the live installation by default and do not write state.
-OwnHow never edits installed Plugins or Skills.`;
+Governance commands leave source methods unchanged; upgrade can replace explicitly selected OwnHow installations.`;
 }
 
 function output(value, json, formatter = null) { process.stdout.write(`${json || !formatter ? JSON.stringify(value, null, 2) : formatter(value)}\n`); }
 function requireTask(parts) { const task = parts.join(" ").trim(); if (!task) throw new Error("Task is required."); return task; }
 function runtimeFor(options) {
-  const runtime = options.runtime ?? "all";
-  if (!["codex", "hermes", "claude", "pi", "opencode", "openclaw", "all"].includes(runtime)) throw new Error("--runtime must be codex, hermes, claude, pi, opencode, openclaw, or all.");
+  const runtime = options.runtime ?? process.env.OWNHOW_RUNTIME ?? (options.root ? "all" : null);
+  if (!runtime) throw new Error("Select --runtime explicitly (or set OWNHOW_RUNTIME). Use all only for cross-runtime comparison.");
+  if (!["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork", "all"].includes(runtime)) throw new Error("--runtime must be codex, hermes, claude, pi, opencode, openclaw, skywork, or all.");
   return runtime;
 }
 async function rootsFor(options) { return options.root?.map((root) => path.resolve(root)) ?? runtimeRoots({ runtime: runtimeFor(options) }); }
 function sourceRuntimeFor(options) { return options.root && runtimeFor(options) !== "all" ? runtimeFor(options) : "auto"; }
-async function liveInventory(options) { return options.root ? scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) }) : scanRuntime({ runtime: runtimeFor(options) }); }
-async function inventoryFor(options, stateDir) { return options.cached ? loadInventory(stateDir) : liveInventory(options); }
+async function liveInventory(options) {
+  if (options["session-manifest"]) {
+    const manifest = await readJson(path.resolve(options["session-manifest"]));
+    if (!manifest || manifest.runtime === "all" || manifest.runtime !== runtimeFor(options) || !Array.isArray(manifest.skillFiles) || manifest.skillFiles.some((file) => typeof file !== "string" || !path.isAbsolute(file))) throw new Error("Session manifest must match --runtime and contain absolute skillFiles paths.");
+    return scanRoots({ roots: [], runtime: manifest.runtime, runtimeState: { authoritative: true, skillFiles: manifest.skillFiles } });
+  }
+  const inventory = options.root ? await scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) }) : await scanRuntime({ runtime: runtimeFor(options) });
+  return { ...inventory, runtime: runtimeFor(options) };
+}
+async function inventoryFor(options, stateDir) {
+  if (!options.cached) return liveInventory(options);
+  if (options["session-manifest"] || options.root) throw new Error("--cached cannot be combined with --root or --session-manifest; rescan the requested sources instead.");
+  const inventory = await loadInventory(stateDir);
+  const runtime = runtimeFor(options);
+  if (inventory.runtime !== runtime) throw new Error("Cached inventory runtime does not match --runtime. Run scan again for the selected runtime.");
+  return inventory;
+}
 async function capsuleInput(positional) {
   if (positional.length !== 1) throw new Error("A single receipt capsule or - for stdin is required.");
   if (positional[0] !== "-") return positional[0];
@@ -104,16 +134,31 @@ async function main() {
   }
   if (command === "resolve" || command === "record") {
     const task = requireTask(positional);
-    const inventory = await inventoryFor(options, stateDir);
-    const plan = { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
-    if (command === "resolve") { output(plan, options.json, formatPlan); return; }
+    if (options.plan && command !== "record") throw new Error("--plan is only supported by record; resolve creates a new plan.");
+    const suppliedPlan = options.plan ? await readJson(path.resolve(options.plan)) : null;
+    if (options.plan && !suppliedPlan) throw new Error("Saved plan not found. Resolve and save the execution plan first.");
+    if (suppliedPlan && (suppliedPlan.schemaVersion !== "0.3" || !Array.isArray(suppliedPlan.augment) || !Array.isArray(suppliedPlan.risks))) throw new Error("Invalid saved execution plan.");
+    if (suppliedPlan && suppliedPlan.runtime !== runtimeFor(options)) throw new Error("Saved plan runtime does not match --runtime.");
+    const inventory = suppliedPlan ? null : await inventoryFor(options, stateDir);
+    const plan = suppliedPlan ?? { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
+    if (suppliedPlan && (plan.task !== task || plan.digest !== planDigest(plan) || plan.id !== `plan-${plan.digest}`)) throw new Error("Plan task or digest does not match. Regenerate and review the execution plan.");
+    if (command === "resolve") {
+      if (options["save-plan"]) await writeJson(path.resolve(options["save-plan"]), plan);
+      output(plan, options.json, formatPlan); return;
+    }
+    const sampleKind = options["sample-kind"] ?? "unknown";
+    const methodUse = options["method-use"] ?? "unknown";
+    if (!["business", "demo", "workflow-test", "unknown"].includes(sampleKind)) throw new Error("Invalid --sample-kind");
+    if (!["loaded", "followed", "unknown"].includes(methodUse)) throw new Error("Invalid --method-use");
+    if (methodUse !== "unknown" && (!suppliedPlan || !plan.methodId)) throw new Error("--method-use requires a saved plan with a Personal Method");
     if (!['success', 'failure'].includes(options.outcome)) throw new Error("--outcome must be success or failure.");
     const confidence = options.confidence ?? "unknown";
     const verifiedBy = options["verified-by"] ?? "unknown";
     if (!["low", "medium", "high", "unknown"].includes(confidence)) throw new Error("--confidence must be low, medium, high, or unknown.");
     if (!["user", "agent", "automated", "unknown"].includes(verifiedBy)) throw new Error("--verified-by must be user, agent, automated, or unknown.");
     const receipt = createReceipt(task, options.outcome, options.correction, plan, {
-      runtime: runtimeFor(options),
+      runtime: plan.runtime ?? runtimeFor(options),
+      sampleKind, methodUse, executionPlan: Boolean(suppliedPlan),
       summary: options.summary,
       evidence: options.evidence,
       artifacts: options.artifact,
@@ -154,7 +199,7 @@ async function main() {
   }
   if (command === "inbox") {
     const [action, entryId, ...extra] = positional;
-    if (!action) {
+    if (!action || (action === "list" && !entryId && !extra.length)) {
       const entries = (await loadInbox(stateDir)).map(inboxSummary).sort((a, b) => b.importedAt.localeCompare(a.importedAt));
       output(entries, options.json, (values) => values.length
         ? values.map((value) => `${value.id}\t${value.status}\t${value.source.agentId}\t${value.outcome}\t${value.task}`).join("\n")
@@ -198,6 +243,23 @@ async function main() {
     if (!proposalId) throw new Error("Proposal id is required.");
     const method = await applyProposal(stateDir, proposalId);
     output(method, options.json, (value) => `Applied ${value.id}@${value.version}\nCorrection: ${value.correction}\nInstalled Skills were not changed.`);
+    return;
+  }
+  if (command === "doctor") {
+    const inventory = await liveInventory(options);
+    const metadata = await readJson(new URL("../package.json", import.meta.url));
+    const skills = inventory.components.filter((item) => item.kind === "skill");
+    output({ cliVersion: metadata.version, nodeVersion: process.version, nodePath: process.execPath, cliPath: process.argv[1], runtime: runtimeFor(options), scope: inventory.analysisScope, roots: inventory.roots, ownhowComponents: inventory.components.filter((item) => item.name.includes("ownhow") || item.plugin === "ownhow" || item.name === "govern-personal-methods").map((item) => ({ name: item.name, version: item.version, source: item.source, lifecycle: item.lifecycle })), metadataErrors: skills.filter((item) => item.metadataError).map((item) => ({ source: item.source, error: item.metadataError })), note: inventory.authoritative ? "Using host-reported or adapter-qualified visibility." : "File discovery only; installed, enabled and current-session visibility are unknown." }, options.json);
+    return;
+  }
+  if (command === "methods") { output(await loadMethods(stateDir), options.json); return; }
+  if (command === "rollback") {
+    if (!positional[0] || !options.version) throw new Error("rollback requires a method id and --version");
+    output(await rollbackMethod(stateDir, positional[0], options.version), options.json); return;
+  }
+  if (command === "upgrade") {
+    const result = await upgrade(options, stateDir);
+    output(result, options.json, (value) => `${value.status}: ${value.currentVersion ?? value.cliVersion ?? "unknown"}${value.targetVersion ? ` -> ${value.targetVersion}` : ""}${value.sessionReloadRequired ? "\nStart a new Agent session to load the updated Skill." : ""}`);
     return;
   }
   if (command === "status") {

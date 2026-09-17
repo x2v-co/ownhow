@@ -1,3 +1,4 @@
+import { parseDocument } from "./vendor/yaml.js";
 import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -30,24 +31,14 @@ function parseScalar(value) {
 export function parseFrontmatter(text) {
   const match = text.match(FRONTMATTER);
   if (!match) return {};
-  const result = {};
-  const lines = match[1].split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const item = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-    if (!item) continue;
-    const value = parseScalar(item[2]);
-    if (value !== "") { result[item[1]] = value; continue; }
-    const sequence = [];
-    while (index + 1 < lines.length) {
-      const next = lines[index + 1].match(/^\s+-\s*(.+)$/);
-      if (!next) break;
-      sequence.push(parseScalar(next[1]));
-      index += 1;
-    }
-    result[item[1]] = sequence.length ? sequence : "";
+  if (Buffer.byteLength(match[1]) > 128 * 1024) throw new Error("Skill metadata exceeds 128 KiB");
+  const document = parseDocument(match[1], { schema: "core", uniqueKeys: true, customTags: [] });
+  if (document.errors.length || document.warnings.length) {
+    throw new Error(`Invalid Skill metadata: ${[...document.errors, ...document.warnings].map((item) => item.message).join("; ")}`);
   }
-  return result;
+  const value = document.toJS({ maxAliasCount: 0 });
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Skill metadata must be a mapping");
+  return value;
 }
 
 async function exists(file) {
@@ -130,6 +121,7 @@ function runtimeFor(sourceRoot, { cwd = process.cwd(), home = os.homedir(), herm
   const source = path.resolve(sourceRoot);
   const hermes = path.resolve(hermesHome || path.join(home, ".hermes"), "skills");
   const claude = path.resolve(home, ".claude");
+  if (source.startsWith(`${path.resolve(home, ".skywork")}${path.sep}`) || source.startsWith(`${path.resolve(cwd, ".skywork")}${path.sep}`)) return "skywork";
   const codex = [path.resolve(home, ".codex"), path.resolve(home, ".agents"), path.resolve(cwd, ".agents"), path.resolve(cwd, "plugins"), path.resolve(cwd, "skills")];
   if (source === hermes || source.startsWith(`${hermes}${path.sep}`)) return "hermes";
   if (source === claude || source.startsWith(`${claude}${path.sep}`) || source.includes(`${path.sep}.claude${path.sep}skills`)) return "claude";
@@ -139,7 +131,9 @@ function runtimeFor(sourceRoot, { cwd = process.cwd(), home = os.homedir(), herm
 
 async function readSkill(skillFile, plugin, sourceRoot, runtime) {
   const body = await readFile(skillFile, "utf8");
-  const metadata = parseFrontmatter(body);
+  let metadata = {};
+  let metadataError = null;
+  try { metadata = parseFrontmatter(body); } catch (error) { metadataError = error.message; }
   const directory = path.dirname(skillFile);
   const skillName = String(metadata.name ?? path.basename(directory));
   const name = runtime === "claude" && plugin ? `${plugin.name}:${skillName}` : skillName;
@@ -150,7 +144,7 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime) {
     version: String(metadata.version ?? plugin?.version ?? "unversioned"), description,
     source: directory, plugin: plugin?.name ?? null, pluginVersion: plugin?.version ?? null,
     lifecycle: lifecycle(),
-    metadata, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
+    metadata, metadataError, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
     reads: normalizedList(metadata.reads), writes: normalizedList(metadata.writes), tools: normalizedList(metadata.tools),
     sideEffects: normalizedList(metadata.side_effects ?? metadata.sideEffects), text, tokens: [...tokenize(text)], digest: digest(body)
   };
@@ -220,13 +214,15 @@ export function defaultRoots({ cwd = process.cwd(), home = os.homedir(), hermesH
   const pi = [path.join(home, ".pi", "agent", "skills"), path.join(home, ".agents", "skills"), path.join(cwd, ".pi", "skills"), path.join(cwd, ".agents", "skills")];
   const opencode = [path.join(home, ".config", "opencode"), path.join(home, ".agents", "skills"), path.join(home, ".claude", "skills"), path.join(cwd, ".opencode"), path.join(cwd, ".agents", "skills"), path.join(cwd, ".claude", "skills")];
   const openclaw = [path.join(home, ".openclaw", "workspace", "skills"), path.join(home, ".openclaw", "workspace", ".agents", "skills"), path.join(home, ".agents", "skills"), path.join(home, ".openclaw", "skills")];
+  const skywork = [path.join(home, ".skywork", "plugins"), path.join(home, ".skywork", "skills"), path.join(cwd, ".skywork", "skills")];
+  if (runtime === "skywork") return skywork;
   if (runtime === "codex") return codex;
   if (runtime === "hermes") return hermes;
   if (runtime === "claude") return claude;
   if (runtime === "pi") return pi;
   if (runtime === "opencode") return opencode;
   if (runtime === "openclaw") return openclaw;
-  return [...codex, ...hermes, ...claude, ...pi, ...opencode, ...openclaw];
+  return [...codex, ...hermes, ...claude, ...pi, ...opencode, ...openclaw, ...skywork];
 }
 
 export async function runtimeRoots({ cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtime = "all" } = {}) {
@@ -234,7 +230,7 @@ export async function runtimeRoots({ cwd = process.cwd(), home = os.homedir(), h
   if (runtime === "pi") return (await piRuntime({ cwd, home })).roots;
   if (runtime === "opencode") return (await opencodeRuntime({ cwd, home })).roots;
   if (runtime === "openclaw") return (await openclawRuntime({ cwd, home })).roots;
-  if (runtime === "all") return [...new Set((await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw"].map((name) => runtimeRoots({ cwd, home, hermesHome, runtime: name })))).flat())];
+  if (runtime === "all") return [...new Set((await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork"].map((name) => runtimeRoots({ cwd, home, hermesHome, runtime: name })))).flat())];
   return defaultRoots({ cwd, home, hermesHome, runtime });
 }
 
@@ -315,9 +311,14 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
     generatedAt: new Date().toISOString(),
     cwd: path.resolve(cwd),
     roots: uniqueRoots,
+    runtime,
     authoritative: authoritative,
     analysisScope: authoritative ? "session-visible" : "runtime-roots",
-    components: components.sort((a, b) => a.id.localeCompare(b.id))
+    components: await Promise.all(components.sort((a, b) => a.id.localeCompare(b.id)).map(async (component) => ({
+      ...component,
+      canonicalSource: await realpath(component.source).catch(() => component.source),
+      analysisScope: authoritative ? "session-visible" : "runtime-roots"
+    })))
   };
 }
 
@@ -331,9 +332,11 @@ async function adapterFor(runtime, options) {
 
 export async function scanRuntime({ runtime = "all", cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
   if (runtime === "all") {
-    const inventories = await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw"].map((name) => scanRuntime({ runtime: name, cwd, home, hermesHome })));
+    const inventories = await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork"].map((name) => scanRuntime({ runtime: name, cwd, home, hermesHome })));
     return {
       schemaVersion: "0.2", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd),
+      runtime: "all",
+      runtimeScopes: Object.fromEntries(inventories.map((item) => [item.runtime, item.analysisScope])),
       roots: [...new Set(inventories.flatMap((item) => item.roots))],
       authoritative: inventories.every((item) => item.authoritative === true),
       analysisScope: inventories.every((item) => item.authoritative === true) ? "session-visible" : "runtime-roots",

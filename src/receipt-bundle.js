@@ -5,7 +5,7 @@ export const CAPSULE_PREFIX = "ownhow:receipt-bundle:v1:";
 export const CAPSULE_V2_PREFIX = "ownhow:receipt-bundle:v2:";
 const MAX_CAPSULE_BYTES = 256 * 1024;
 const OUTCOMES = new Set(["success", "failure"]);
-const RUNTIMES = new Set(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "all", "unknown"]);
+const RUNTIMES = new Set(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork", "all", "unknown"]);
 const CONFIDENCE = new Set(["low", "medium", "high", "unknown"]);
 const VERIFIED_BY = new Set(["user", "agent", "automated", "unknown"]);
 

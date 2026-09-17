@@ -65,7 +65,7 @@ test("resolves against a Hermes-only inventory", async () => {
 test("rejects unknown runtimes", async () => {
   await assert.rejects(
     exec(process.execPath, [path.join(root, "src", "cli.js"), "analyze", "--runtime", "other"]),
-    /--runtime must be codex, hermes, claude, pi, opencode, openclaw, or all/
+    /--runtime must be codex, hermes, claude, pi, opencode, openclaw, skywork, or all/
   );
 });
 

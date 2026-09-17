@@ -22,7 +22,8 @@ export function tokenize(value) {
     .filter((entry) => entry.isWordLike && /\p{Script=Han}/u.test(entry.segment))
     .map((entry) => entry.segment);
 
-  return new Set([...latin, ...cjk].filter((token) => token.length > 1 && !STOP_WORDS.has(token)));
+  const aliases = { skills: "skill", plugins: "plugin", methods: "method" };
+  return new Set([...latin.map((word) => aliases[word] ?? word), ...cjk].filter((token) => token.length > 1 && !STOP_WORDS.has(token)));
 }
 
 export function overlapScore(left, right) {

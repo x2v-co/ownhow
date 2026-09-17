@@ -1,0 +1,30 @@
+name: Release update bundle
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate stable release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node --input-type=module -e 'import fs from "node:fs"; const v = JSON.parse(fs.readFileSync("package.json")).version; if (!/^\d+\.\d+\.\d+$/.test(v) || process.env.RELEASE_TAG !== `v${v}`) process.exit(1)'
+      - run: npm run verify
+      - run: node scripts/build-release.js
+      - name: Publish same-version CLI, Skill, and update notice
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/ownhow-bundle.json dist/ownhow-update.json dist/ownhow-update-notice.txt --verify-tag --title "OwnHow $RELEASE_TAG" --notes-file "docs/release-note-$RELEASE_TAG.md"
+      - name: Notify configured Agent gateway
+        env:
+          OWNHOW_UPDATE_WEBHOOK: ${{ secrets.OWNHOW_UPDATE_WEBHOOK }}
+          OWNHOW_UPDATE_WEBHOOK_TOKEN: ${{ secrets.OWNHOW_UPDATE_WEBHOOK_TOKEN }}
+        run: node scripts/notify-release.js

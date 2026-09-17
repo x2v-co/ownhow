@@ -1,8 +1,8 @@
 # OwnHow MVP
 
-OwnHow is a local-first prototype for owning and improving how AI completes work. The MVP reads active Codex, Hermes, Claude Code, Pi, OpenCode, and OpenClaw methods, explains conflicts and task selection, records evidence-backed outcomes, and turns explicit user corrections into Personal Method overlays.
+OwnHow is a local-first prototype for owning and improving how AI completes work. The MVP inventories Codex, Hermes, Claude Code, Pi, OpenCode, OpenClaw, and Skywork methods with explicit discovery and visibility states, explains conflicts and task selection, records evidence-backed outcomes, and turns explicit user corrections into Personal Method overlays.
 
-It does not upload source files, call a model, or modify installed Plugins and Skills.
+Governance commands do not upload source files, call a model, or modify installed Plugins and Skills. The explicit updater can replace the selected OwnHow CLI and standalone OwnHow Skill.
 
 ## Requirements
 
@@ -13,14 +13,14 @@ It does not upload source files, call a model, or modify installed Plugins and S
 Install the CLI directly from this repository:
 
 ```bash
-npm install --global github:x2v-co/ownhow#v0.6.0
+npm install --global github:x2v-co/ownhow#v0.7.0
 ownhow --help
 ```
 
 Add the OwnHow marketplace and install the Codex Plugin (optional):
 
 ```bash
-codex plugin marketplace add x2v-co/ownhow --ref v0.6.0
+codex plugin marketplace add x2v-co/ownhow --ref v0.7.0
 codex plugin add ownhow@x2v
 ```
 
@@ -31,7 +31,7 @@ Start a new Codex chat after installing the Plugin. The Plugin provides the gove
 Install the standalone Hermes Skill into the active Hermes profile:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.6.0/skills/ownhow-governance/SKILL.md --yes
+hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.7.0/skills/ownhow-governance/SKILL.md --yes
 ```
 
 The CLI discovers active Hermes skills under `~/.hermes/skills` automatically, following Hermes' archive, support-directory, platform, environment, disabled-skill, symlink, and duplicate-name discovery rules. Use `--runtime hermes` to keep analysis scoped to Hermes, or `--root PATH` for a custom `HERMES_HOME`/profile.
@@ -54,7 +54,7 @@ The static inventory includes project Skills active at session startup. Claude C
 Install OwnHow as a Pi Package:
 
 ```bash
-pi install git:github.com/x2v-co/ownhow@v0.6.0
+pi install git:github.com/x2v-co/ownhow@v0.7.0
 ```
 
 OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and `.agents` discovery, settings filters, symlink deduplication, and Package-contributed Skills. Use `--runtime pi` for Pi-only analysis.
@@ -64,7 +64,7 @@ OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and 
 Install the standalone Skill in OpenCode's global Skill directory:
 
 ```bash
-git clone --branch v0.6.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.7.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 ln -s ~/.local/share/ownhow/skills/ownhow-governance ~/.config/opencode/skills/ownhow-governance
 ```
 
@@ -75,11 +75,19 @@ OwnHow uses `opencode debug skill` as the authoritative live inventory when Open
 Install the standalone Skill globally:
 
 ```bash
-git clone --branch v0.6.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.7.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global --as ownhow-governance
 ```
 
 OwnHow uses OpenClaw's eligible Skill report and loaded Plugin registry, retaining bundled Skills even when they have no separately discoverable path. Use `--runtime openclaw` for OpenClaw-only analysis.
+
+## Update CLI and Skill together
+
+The source version adds `ownhow upgrade --check --json`, `--apply`, and opt-in
+patch updates with `--enable-auto` / `--auto`. Releases can notify an Agent
+gateway through an optional webhook; Agents validate the official release
+before updating. See [Agent updates](docs/agent-updates.md) for enrollment,
+standalone versus Plugin handling, push delivery, and failure recovery.
 
 ## Run from source
 
@@ -88,17 +96,32 @@ git clone https://github.com/x2v-co/ownhow.git
 cd ownhow
 npm link
 
-ownhow analyze --runtime all
+ownhow analyze --runtime codex
 ownhow resolve "review a merge request, fix findings, and verify the result" --runtime hermes
 ownhow analyze --runtime claude
 ownhow analyze --runtime pi
 ownhow analyze --runtime opencode
 ownhow analyze --runtime openclaw
+ownhow doctor --runtime skywork
 ```
 
-`analyze` and `resolve` scan the live installation without writing state. Run `ownhow scan` when you explicitly want to save a snapshot, or pass `--cached` to analyze or resolve that snapshot. State is stored in `~/.ownhow` by default. Use `--state PATH` for an isolated experiment, `--root PATH` to scan an explicit source, and `--runtime codex|hermes|claude|pi|opencode|openclaw|all` to select the runtime.
+`analyze` and `resolve` scan the live installation without writing state. Run `ownhow scan --runtime <runtime>` when you explicitly want to save a snapshot, or pass `--cached` to analyze or resolve that snapshot. State is stored in `~/.ownhow` by default. Use `--state PATH` for an isolated experiment, `--root PATH` to scan an explicit source, and `--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all` to select the runtime.
 
 Inventory state is explicit: `discovered`, `installed`, `enabled`, and `sessionVisible` are tracked separately. Runtime adapters use their authoritative active/eligible reports when available; otherwise OwnHow marks installation and visibility as unknown and labels the scope as `runtime-roots`. Recursive fallback scanning excludes `.review/`, `.smoke/`, temporary worktrees, build output, and common caches. Conflict analysis and task resolution strictly use the `session-visible` scope when an authoritative report exists; fallback results are clearly labeled candidates with unknown activation state and never include excluded temporary checkouts.
+
+## Runtime scope and diagnosis
+
+Select `--runtime` explicitly or set `OWNHOW_RUNTIME`. Without either, only an explicit `--root` scan is allowed; its runtime scope is `all` and component runtimes are inferred from known paths. Use `--runtime all` for cross-runtime comparison. A cached inventory must match the requested runtime; old snapshots without runtime metadata must be rescanned. `--cached` cannot be combined with `--root` or `--session-manifest`.
+
+Skywork directory discovery checks `~/.skywork/plugins`, `~/.skywork/skills`, and project `.skywork/skills`. These are candidates with unknown activation state. Use `--root` for another installation path. When a host provides the exact current-session list, pass `--session-manifest PATH` with this JSON shape:
+
+```json
+{"runtime":"skywork","skillFiles":["/absolute/path/to/SKILL.md"]}
+```
+
+The manifest must match one selected runtime. OwnHow trusts this host report; it does not independently prove visibility. `ownhow doctor --runtime skywork` reports the CLI path/version, discovery scope, OwnHow components, and metadata parse errors without saving state.
+
+Cross-runtime copies are informational. Same-session name and declared write collisions are reported separately from semantic overlap, which is a routing hint rather than proof of a behavioral conflict. Text-only risk hints do not become approval requirements. Resolve exposes per-field scores and exclusion reasons, and only adds an augment when that Skill explicitly declares `augments: [primary-skill-name]` in the same runtime.
 
 ## Personal Method loop
 
@@ -111,7 +134,8 @@ ownhow record "review a merge request, fix findings, and verify the result" \
   --summary "The requested fixes were made, but verification was missing" \
   --blocker "Focused tests were not run" \
   --confidence low \
-  --verified-by user
+  --verified-by user \
+  --runtime codex
 
 ownhow propose
 ```
@@ -120,10 +144,28 @@ Review the proposal under `~/.ownhow/proposals/`. Applying it is always explicit
 
 ```bash
 ownhow apply proposal-123
-ownhow resolve "review a merge request, fix findings, and verify the result"
+ownhow resolve "review a merge request, fix findings, and verify the result" --runtime codex
 ```
 
 The second resolve includes the Personal Method correction. The original Plugin and Skill remain unchanged.
+
+Each applied correction creates a version and retains history. `ownhow methods` lists current methods. After reviewing the older correction, `ownhow rollback <method-id> --version 0.1.0` restores it as a new revision; it does not erase intervening versions.
+
+For execution evidence, save the plan before performing the task and pass that exact file to `record`:
+
+```bash
+ownhow resolve "verify login behavior" --runtime codex --save-plan ./login-plan.json
+# Perform the task, then record its observed outcome and evidence.
+ownhow record "verify login behavior" --runtime codex --plan ./login-plan.json \
+  --outcome success --sample-kind business \
+  --summary "Login behavior verified" --evidence "Observed expected login result" \
+  --verified-by agent
+```
+
+Record `--method-use loaded` or `followed` only when the saved plan contains a Personal Method and the assertion is true. Otherwise it remains `unknown`. Without `--plan`, the receipt explicitly records retrospective selection. Missing plans, changed digests, and mismatched tasks/runtimes are rejected. The digest checks consistency, not whether execution actually happened. `--sample-kind business|demo|workflow-test|unknown` separates business evidence from workflow tests.
+
+Plan attribution and sample kind are currently local receipt fields. Receipt Bundle v1/v2 export retains its existing schema and does not transmit these fields.
+
 
 ## Recover receipts from remote Agents
 
@@ -166,16 +208,20 @@ See [Receipt Bundle Protocol v2](docs/receipt-bundle-v2.md) for the evidence-ric
 
 | Command | Purpose |
 |---|---|
-| `scan` | Build a read-only inventory of active Plugins and Skills |
+| `scan` | Save an inventory with discovery and visibility states; leave source methods unchanged |
 | `analyze` | Detect duplicate names, semantic overlap, write collisions, missing metadata, and risk surfaces |
 | `resolve <task>` | Produce a deterministic task plan with selection reasons and approval risks |
 | `record <task>` | Save a local receipt with outcome, verification evidence, and optional correction |
 | `export` | Export an evidence-rich Receipt Bundle capsule for Agent-mediated recovery |
 | `import` | Validate a capsule and place it in the pending Inbox |
-| `inbox` | List, review, explicitly accept, or reject remote receipts |
+| `inbox` | List, review, explicitly accept, or reject remote receipts (`inbox list` is also accepted) |
 | `propose` | Create a reviewable Personal Method proposal from a corrected receipt |
 | `apply <id>` | Explicitly apply a proposal as a local overlay |
 | `status` | Show local inventory, receipt, and method counts |
+| `upgrade` | Check/apply releases, enroll patch updates, or consume a version notice |
+| `doctor` | Report paths, versions, scope, and metadata errors |
+| `methods` | List current Personal Methods and versions |
+| `rollback <method-id> --version VERSION` | Restore an older correction as a new revision |
 
 Add `--json` to any command for structured output.
 
@@ -186,9 +232,11 @@ npm test
 npm run verify
 ```
 
+After editing the Plugin workflow, run `node scripts/sync-skills.js` to regenerate the standalone Skill. Verification checks that both workflows stay aligned. This release publishes the CLI, standalone Skill, and update bundle as v0.7.0.
+
 ## Runtime support and MVP boundary
 
-- Active Codex, Hermes, Claude Code, Pi, OpenCode, and OpenClaw method sources
+- Runtime-aware Codex, Hermes, Claude Code, Pi, OpenCode, and OpenClaw sources; Skywork directory discovery and host session manifests
 - Deterministic local analysis; no LLM resolver
 - Local JSON/JSONL state with evidence-rich Receipt details
 - Personal Method overlays do not rewrite upstream packages
