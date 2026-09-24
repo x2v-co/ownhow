@@ -73,6 +73,17 @@ test("automatic updates require enrollment, throttle checks, and restrict minor 
   await upgrade({ "disable-auto": true }, state, deps);
   assert.equal((await upgrade({ auto: true }, state, deps)).status, "auto_disabled");
 }));
+test("gstack-style update prompts support bounded snoozing", () => fixture(async ({ state, skill, deps }) => {
+  await upgrade({ "enable-auto": true, "skill-dir": skill }, state, deps);
+  const check = await upgrade({ check: true }, state, deps);
+  assert.equal(check.status, "update_available");
+  assert.equal(check.prompt.kind, "ownhow-upgrade");
+  assert.deepEqual(check.prompt.choices.map((choice) => choice.id), ["apply", "enable_auto", "snooze"]);
+  const snoozed = await upgrade({ snooze: true, notice: check.notice }, state, deps);
+  assert.equal(snoozed.status, "snoozed");
+  assert.equal(snoozed.snoozeLevel, 1);
+  assert.equal((await upgrade({ auto: true }, state, deps)).status, "snoozed");
+}));
 test("push notices fetch a fixed official version and mismatches are rejected", () => fixture(async ({ state, deps, calls }) => {
   await assert.rejects(upgrade({ check: true, notice: "ownhow:update:v1:0.6.2" }, state, deps), /manifest/);
   assert.equal(calls[0], "https://github.com/x2v-co/ownhow/releases/download/v0.6.2/ownhow-update.json");

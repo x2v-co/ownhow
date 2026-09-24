@@ -42,4 +42,7 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   assert.match(hermesSkill.description, /Pi/);
   assert.match(hermesSkill.description, /OpenCode/);
   assert.match(hermesSkill.description, /OpenClaw/);
+  assert.match(skillText, /ownhow upgrade --auto --json/);
+  assert.match(skillText, /approval_required/);
+  assert.match(hermesSkillText, /ownhow upgrade --auto --json/);
 });

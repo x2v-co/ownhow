@@ -22,6 +22,16 @@ test("selects a governance Skill from several independent task signals", () => {
   assert.equal(plan.methodId, null);
 });
 
+test("routes Chinese governance status and feedback questions to OwnHow", () => {
+  const status = resolveTask({ components: [governanceSkill] }, "检查当前 OwnHow 状态、版本和最近的 Receipt", []);
+  assert.equal(status.primary?.name, "govern-personal-methods");
+  assert.equal(status.reason, "matched");
+
+  const feedback = resolveTask({ components: [governanceSkill] }, "回收其他 Agent 的反馈并分析 Skill 冲突", []);
+  assert.equal(feedback.primary?.name, "govern-personal-methods");
+  assert.ok(feedback.primary.sharedTokens.includes("反馈"));
+});
+
 test("does not select a Skill from incidental overlap", () => {
   const plan = resolveTask({ components: [governanceSkill] }, "修复 Codex 项目中的一个按钮", []);
   assert.equal(plan.primary, null);

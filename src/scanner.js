@@ -46,12 +46,12 @@ async function exists(file) {
 }
 
 async function walk(directory, predicate, results = [], options = {}, visited = new Set()) {
-  if (!(await exists(directory))) return results;
   let canonical;
   try { canonical = await realpath(directory); } catch { return results; }
   if (visited.has(canonical)) return results;
   visited.add(canonical);
-  const entries = await readdir(directory, { withFileTypes: true });
+  let entries;
+  try { entries = await readdir(directory, { withFileTypes: true }); } catch { return results; }
   const hasSkill = entries.some((entry) => entry.name === "SKILL.md" && !entry.isDirectory());
   const excluded = options.excludedDirectories ?? COMMON_EXCLUDED_DIRECTORIES;
   for (const entry of entries) {
@@ -65,6 +65,59 @@ async function walk(directory, predicate, results = [], options = {}, visited = 
     else if (predicate(file)) results.push(file);
   }
   return results;
+}
+
+// A scanRuntime("all") run can expose the same roots through several host
+// adapters (for example ~/.agents/skills). Keep the expensive directory walk
+// and file reads shared for the lifetime of that scan. The cache is deliberately
+// internal so the public scanner API remains unchanged.
+function createScanCache() {
+  return { canonical: new Map(), walks: new Map(), files: new Map() };
+}
+
+async function canonicalPath(file, cache) {
+  const resolved = path.resolve(file);
+  if (!cache) return realpath(resolved).catch(() => resolved);
+  if (cache.canonical.has(resolved)) return cache.canonical.get(resolved);
+  const pending = realpath(resolved).catch(() => resolved);
+  cache.canonical.set(resolved, pending);
+  const canonical = await pending;
+  cache.canonical.set(resolved, canonical);
+  if (!cache.canonical.has(canonical)) cache.canonical.set(canonical, canonical);
+  return canonical;
+}
+
+function walkOptionsKey(options = {}) {
+  const excluded = [...(options.excludedDirectories ?? COMMON_EXCLUDED_DIRECTORIES)].sort().join(",");
+  return `${options.followSymlinks ? 1 : 0}:${options.pruneSkillSupport ? 1 : 0}:${excluded}`;
+}
+
+async function cachedWalk(directory, predicate, kind, options = {}, cache = null) {
+  if (!cache) return walk(directory, predicate, [], options);
+  const canonical = await canonicalPath(directory, cache);
+  const key = `${canonical}\0${kind}\0${walkOptionsKey(options)}`;
+  if (cache.walks.has(key)) return [...cache.walks.get(key)];
+  // Preserve the caller's path spelling in component sources while using the
+  // canonical path only as the cache key. Subsequent aliases reuse this result.
+  const result = await walk(directory, predicate, [], options);
+  cache.walks.set(key, [...result]);
+  return result;
+}
+
+async function cachedReadFile(file, cache) {
+  if (!cache) return readFile(file, "utf8");
+  const key = path.resolve(file);
+  if (cache.files.has(key)) return cache.files.get(key);
+  const pending = readFile(file, "utf8");
+  cache.files.set(key, pending);
+  try {
+    const text = await pending;
+    cache.files.set(key, text);
+    return text;
+  } catch (error) {
+    cache.files.delete(key);
+    throw error;
+  }
 }
 
 function digest(text) { return createHash("sha256").update(text).digest("hex").slice(0, 16); }
@@ -129,8 +182,8 @@ function runtimeFor(sourceRoot, { cwd = process.cwd(), home = os.homedir(), herm
   return "unknown";
 }
 
-async function readSkill(skillFile, plugin, sourceRoot, runtime) {
-  const body = await readFile(skillFile, "utf8");
+async function readSkill(skillFile, plugin, sourceRoot, runtime, scanCache = null) {
+  const body = await cachedReadFile(skillFile, scanCache);
   let metadata = {};
   let metadataError = null;
   try { metadata = parseFrontmatter(body); } catch (error) { metadataError = error.message; }
@@ -150,8 +203,8 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime) {
   };
 }
 
-function lifecycle({ installed = null, enabled = null, sessionVisible = null } = {}) {
-  return { discovered: true, installed, enabled, sessionVisible };
+function lifecycle({ installed = null, enabled = null, sessionVisible = null, actualUsed = null } = {}) {
+  return { discovered: true, installed, enabled, sessionVisible, actualUsed };
 }
 
 function syntheticSkill(entry, runtime, state = {}) {
@@ -186,14 +239,15 @@ function skillDirectories(root, manifest, runtime) {
   return [...new Set([path.join(root, "skills"), ...custom])];
 }
 
-async function readPlugin(manifestFile, sourceRoot, runtime) {
+async function readPlugin(manifestFile, sourceRoot, runtime, scanCache = null) {
   const root = path.dirname(path.dirname(manifestFile));
-  const raw = await readFile(manifestFile, "utf8");
+  const raw = await cachedReadFile(manifestFile, scanCache);
   let manifest;
   try { manifest = JSON.parse(raw); } catch { return []; }
   const directories = skillDirectories(root, manifest, runtime);
   const skillFiles = [];
-  for (const directory of directories) await walk(directory, (file) => path.basename(file) === "SKILL.md", skillFiles, runtime === "claude" ? { followSymlinks: true, pruneSkillSupport: true } : {});
+  const walkOptions = runtime === "claude" ? { followSymlinks: true, pruneSkillSupport: true } : {};
+  for (const directory of directories) skillFiles.push(...await cachedWalk(directory, (file) => path.basename(file) === "SKILL.md", "skill", walkOptions, scanCache));
   if (runtime === "claude" && !skillFiles.length && !manifest.skills && await exists(path.join(root, "SKILL.md"))) skillFiles.push(path.join(root, "SKILL.md"));
   const plugin = {
     id: componentId("plugin", root, sourceRoot), kind: "plugin", runtime, name: String(manifest.name ?? path.basename(root)),
@@ -204,7 +258,7 @@ async function readPlugin(manifestFile, sourceRoot, runtime) {
     hooks: manifest.hooks ?? ((await exists(path.join(root, "hooks", "hooks.json"))) ? path.join(root, "hooks", "hooks.json") : null),
     digest: digest(raw), tokens: [...tokenize(`${manifest.name ?? ""} ${manifest.description ?? ""} ${manifest.interface?.shortDescription ?? ""}`)]
   };
-  return [plugin, ...(await Promise.all(skillFiles.map((file) => readSkill(file, plugin, sourceRoot, runtime))))];
+  return [plugin, ...(await Promise.all(skillFiles.map((file) => readSkill(file, plugin, sourceRoot, runtime, scanCache))))];
 }
 
 export function defaultRoots({ cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtime = "all" } = {}) {
@@ -234,16 +288,42 @@ export async function runtimeRoots({ cwd = process.cwd(), home = os.homedir(), h
   return defaultRoots({ cwd, home, hermesHome, runtime });
 }
 
-export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), runtime = "auto", home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtimeState = null } = {}) {
+export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), runtime = "auto", home = os.homedir(), hermesHome = process.env.HERMES_HOME, runtimeState = null, scanCache: providedScanCache = null } = {}) {
+  const scanCache = providedScanCache ?? createScanCache();
   const uniqueRoots = [...new Set(roots.map((root) => path.resolve(root)))];
+  const rootRecords = [];
+  const seenCanonicalRoots = new Set();
+  for (const root of uniqueRoots) {
+    const canonical = await canonicalPath(root, scanCache);
+    if (seenCanonicalRoots.has(canonical)) continue;
+    seenCanonicalRoots.add(canonical);
+    rootRecords.push({ root, canonical });
+  }
   const components = [];
   const seen = new Set();
+  const seenSkillSources = new Set();
   const seenHermesNames = new Set();
   const seenClaudeNames = new Set();
   const seenClaudeTargets = new Set();
-  const claude = await claudeRuntime({ cwd, home });
-  const activeSkillNames = runtimeState?.activeSkillNames ?? null;
+  // Only load Claude's host settings when this projection can actually use
+  // them. The previous unconditional adapter call made every runtime scan
+  // reread Claude configuration and project ancestry.
+  const needsClaude = runtime === "claude" || runtime === "auto" && rootRecords.some(({ root }) => runtimeFor(root, { cwd, home, hermesHome }) === "claude");
+  const claude = needsClaude ? await claudeRuntime({ cwd, home }) : { pluginRoots: new Set(), skillRoots: new Set(), disabledSkills: new Set(), disabledPlugins: new Set() };
+  const activeSkillNames = runtimeState?.activeSkillNames instanceof Set
+    ? runtimeState.activeSkillNames
+    : Array.isArray(runtimeState?.activeSkillNames) ? new Set(runtimeState.activeSkillNames.map(String)) : null;
+  // actualUsedSkillNames is an optional exhaustive host report. When absent,
+  // actual use remains unknown even if the Skill is visible in the session.
+  const actualUsedSkillNames = runtimeState?.actualUsedSkillNames instanceof Set
+    ? runtimeState.actualUsedSkillNames
+    : Array.isArray(runtimeState?.actualUsedSkillNames) ? new Set(runtimeState.actualUsedSkillNames.map(String)) : null;
   const explicitSkillFiles = runtimeState?.authoritative && Array.isArray(runtimeState.skillFiles) ? runtimeState.skillFiles : null;
+  const syntheticSkillEntries = runtimeState?.authoritative && Array.isArray(runtimeState.syntheticSkills) ? runtimeState.syntheticSkills : null;
+  // A host that supplies synthetic active skills is authoritative about the
+  // session. Recursing through its roots would re-introduce inactive and
+  // duplicate files, defeating the host's eligibility report.
+  const skipRootDiscovery = explicitSkillFiles !== null || syntheticSkillEntries !== null;
   const seenRuntimeNames = new Set();
 
   const authoritative = runtimeState?.authoritative === true;
@@ -251,37 +331,42 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
   if (explicitSkillFiles) {
     for (const skillFile of explicitSkillFiles) {
       const sourceRoot = uniqueRoots.find((root) => skillFile === root || skillFile.startsWith(`${root}${path.sep}`)) ?? path.dirname(skillFile);
-      const skill = await readSkill(skillFile, null, sourceRoot, runtime);
-      skill.lifecycle = lifecycle({ installed: true, enabled: true, sessionVisible: true });
+      const skill = await readSkill(skillFile, null, sourceRoot, runtime, scanCache);
+      skill.lifecycle = lifecycle({ installed: true, enabled: true, sessionVisible: true, actualUsed: actualUsedSkillNames ? actualUsedSkillNames.has(skill.name) : null });
       if (seenRuntimeNames.has(skill.name)) continue;
       seenRuntimeNames.add(skill.name);
       skill.id = `${runtime}:${skill.id}`;
       components.push(skill);
     }
   }
-  for (const sourceRoot of uniqueRoots) {
-    if (explicitSkillFiles) break;
+  for (const { root: sourceRoot, canonical: scanDirectory } of rootRecords) {
+    if (skipRootDiscovery) break;
     const sourceRuntime = runtime === "auto" ? runtimeFor(sourceRoot, { cwd, home, hermesHome }) : runtime;
     const resolvedHermesHome = hermesHome || (sourceRuntime === "hermes" ? path.dirname(sourceRoot) : path.join(home, ".hermes"));
     const disabledHermesSkills = sourceRuntime === "hermes" ? await readHermesDisabled(resolvedHermesHome) : new Set();
     const claudeExcluded = claude.pluginRoots.has(sourceRoot) ? COMMON_EXCLUDED_DIRECTORIES : CLAUDE_EXCLUDED_DIRECTORIES;
     const walkOptions = sourceRuntime === "hermes" ? { excludedDirectories: HERMES_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : sourceRuntime === "claude" ? { excludedDirectories: claudeExcluded, followSymlinks: true, pruneSkillSupport: true } : ["pi", "opencode", "openclaw"].includes(sourceRuntime) ? { excludedDirectories: AGENT_EXCLUDED_DIRECTORIES, followSymlinks: true, pruneSkillSupport: true } : {};
     const manifestDirectory = sourceRuntime === "claude" ? ".claude-plugin" : ".codex-plugin";
-    const manifests = await walk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === manifestDirectory, [], walkOptions);
+    const manifests = await cachedWalk(sourceRoot, (file) => path.basename(file) === "plugin.json" && path.basename(path.dirname(file)) === manifestDirectory, "manifest", walkOptions, scanCache);
     for (const manifest of manifests) {
-      if (sourceRuntime === "claude" && claude.skillRoots.has(sourceRoot)) {
+      if (sourceRuntime === "claude" && (claude.skillRoots.has(sourceRoot) || claude.skillRoots.has(scanDirectory))) {
         let metadata;
-        try { metadata = JSON.parse(await readFile(manifest, "utf8")); } catch { continue; }
+        try { metadata = JSON.parse(await cachedReadFile(manifest, scanCache)); } catch { continue; }
         if (claude.disabledPlugins.has(`${metadata.name}@skills-dir`)) continue;
       }
-      for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime)) {
-        entry.lifecycle = lifecycle({ installed: authoritative ? true : null, enabled: authoritative ? true : null, sessionVisible: authoritative ? true : null });
-        if (!seen.has(entry.id)) { seen.add(entry.id); components.push(entry); }
+      for (const entry of await readPlugin(manifest, sourceRoot, sourceRuntime, scanCache)) {
+        entry.lifecycle = lifecycle({ installed: authoritative ? true : null, enabled: authoritative ? true : null, sessionVisible: authoritative ? true : null, actualUsed: authoritative && entry.kind === "skill" && actualUsedSkillNames ? actualUsedSkillNames.has(entry.name) : null });
+        if (!seen.has(entry.id)) {
+          seen.add(entry.id);
+          components.push(entry);
+          if (entry.kind === "skill") seenSkillSources.add(path.resolve(entry.source));
+        }
       }
     }
-    for (const skillFile of await walk(sourceRoot, (file) => path.basename(file) === "SKILL.md", [], walkOptions)) {
-      if (components.some((entry) => entry.kind === "skill" && entry.source === path.dirname(skillFile))) continue;
-      const skill = await readSkill(skillFile, null, sourceRoot, sourceRuntime);
+    for (const skillFile of await cachedWalk(sourceRoot, (file) => path.basename(file) === "SKILL.md", "skill", walkOptions, scanCache)) {
+      const skillSource = path.resolve(path.dirname(skillFile));
+      if (seenSkillSources.has(skillSource)) continue;
+      const skill = await readSkill(skillFile, null, sourceRoot, sourceRuntime, scanCache);
       if (sourceRuntime === "hermes" && (!matchesPlatform(skill.metadata) || !(await matchesEnvironment(skill.metadata)) || disabledHermesSkills.has(skill.name) || seenHermesNames.has(skill.name))) continue;
       if (sourceRuntime === "hermes") seenHermesNames.add(skill.name);
       if (sourceRuntime === "claude") {
@@ -296,15 +381,15 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
         seenRuntimeNames.add(skill.name);
         skill.id = `${sourceRuntime}:${skill.id}`;
       }
-      skill.lifecycle = lifecycle({ installed: authoritative ? true : null, enabled: authoritative ? true : null, sessionVisible: authoritative ? true : null });
-      if (!seen.has(skill.id)) { seen.add(skill.id); components.push(skill); }
+      skill.lifecycle = lifecycle({ installed: authoritative ? true : null, enabled: authoritative ? true : null, sessionVisible: authoritative ? true : null, actualUsed: authoritative && actualUsedSkillNames ? actualUsedSkillNames.has(skill.name) : null });
+      if (!seen.has(skill.id)) { seen.add(skill.id); seenSkillSources.add(skillSource); components.push(skill); }
     }
   }
-  for (const entry of runtimeState?.syntheticSkills ?? []) {
+  for (const entry of syntheticSkillEntries ?? []) {
     if (activeSkillNames && !activeSkillNames.has(String(entry.name))) continue;
     if (seenRuntimeNames.has(String(entry.name))) continue;
     seenRuntimeNames.add(String(entry.name));
-    components.push(syntheticSkill(entry, runtime, { installed: true, enabled: true, sessionVisible: true }));
+    components.push(syntheticSkill(entry, runtime, { installed: true, enabled: true, sessionVisible: true, actualUsed: actualUsedSkillNames ? actualUsedSkillNames.has(String(entry.name)) : null }));
   }
   return {
     schemaVersion: "0.2",
@@ -316,7 +401,9 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
     analysisScope: authoritative ? "session-visible" : "runtime-roots",
     components: await Promise.all(components.sort((a, b) => a.id.localeCompare(b.id)).map(async (component) => ({
       ...component,
-      canonicalSource: await realpath(component.source).catch(() => component.source),
+      canonicalSource: typeof component.source === "string"
+        ? path.isAbsolute(component.source) ? await canonicalPath(component.source, scanCache) : await realpath(component.source).catch(() => component.source)
+        : component.source,
       analysisScope: authoritative ? "session-visible" : "runtime-roots"
     })))
   };
@@ -330,9 +417,10 @@ async function adapterFor(runtime, options) {
   return { roots: defaultRoots({ ...options, runtime }), authoritative: runtime === "hermes" };
 }
 
-export async function scanRuntime({ runtime = "all", cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME } = {}) {
+export async function scanRuntime({ runtime = "all", cwd = process.cwd(), home = os.homedir(), hermesHome = process.env.HERMES_HOME, scanCache: providedScanCache = null } = {}) {
   if (runtime === "all") {
-    const inventories = await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork"].map((name) => scanRuntime({ runtime: name, cwd, home, hermesHome })));
+    const scanCache = providedScanCache ?? createScanCache();
+    const inventories = await Promise.all(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork"].map((name) => scanRuntime({ runtime: name, cwd, home, hermesHome, scanCache })));
     return {
       schemaVersion: "0.2", generatedAt: new Date().toISOString(), cwd: path.resolve(cwd),
       runtime: "all",
@@ -344,5 +432,5 @@ export async function scanRuntime({ runtime = "all", cwd = process.cwd(), home =
     };
   }
   const state = await adapterFor(runtime, { cwd, home, hermesHome });
-  return scanRoots({ roots: state.roots, cwd, home, hermesHome, runtime, runtimeState: state });
+  return scanRoots({ roots: state.roots, cwd, home, hermesHome, runtime, runtimeState: state, scanCache: providedScanCache });
 }

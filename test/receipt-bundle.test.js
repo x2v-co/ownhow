@@ -64,6 +64,34 @@ test("exports evidence-rich v2 capsules and preserves verified details", () => {
   assert.equal(envelope.receipt.details.verifiedBy, "user");
 });
 
+test("adds optional governance lifecycle evidence to v2 while keeping v1 minimal", () => {
+  const governed = receipt({
+    governance: {
+      discovered: true,
+      matched: true,
+      loaded: true,
+      actualUsed: true,
+      followed: false,
+      reused: true,
+      verified: true
+    },
+    details: {
+      summary: "Method was loaded but one correction was not followed.",
+      evidence: [],
+      artifacts: [],
+      blockers: [],
+      confidence: "medium",
+      verifiedBy: "agent"
+    }
+  });
+  const v2 = createReceiptCapsule(governed, { agentId: "agent-a", runtime: "hermes", protocolVersion: 2 });
+  const parsed = parseReceiptCapsule(v2.capsule);
+  assert.deepEqual(parsed.receipt.details.governance, governed.governance);
+  const v1 = createReceiptCapsule(governed, { agentId: "agent-a", runtime: "hermes", protocolVersion: 1 });
+  const parsedV1 = parseReceiptCapsule(v1.capsule);
+  assert.equal(parsedV1.receipt.governance, undefined);
+});
+
 test("redacts filesystem paths and credential-like values before export", () => {
   const exported = createReceiptCapsule(receipt({
     task: "Inspect /home/ubuntu/customer-notes.txt",
@@ -143,6 +171,22 @@ test("imports idempotently and requires acceptance before appending a receipt", 
     const acceptedAgain = await acceptInboxEntry(stateDir, first.entry.id);
     assert.equal(acceptedAgain.duplicate, true);
     assert.equal((await loadReceipts(stateDir)).length, 1);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("preserves governance evidence after explicit Inbox acceptance", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "ownhow-bundle-governance-test-"));
+  try {
+    const source = receipt({
+      governance: { discovered: true, matched: true, loaded: true, actualUsed: true, followed: true, reused: false, verified: true },
+      details: { summary: "done", evidence: [], artifacts: [], blockers: [], confidence: "high", verifiedBy: "user" }
+    });
+    const capsule = createReceiptCapsule(source, { agentId: "agent-governed", runtime: "hermes", protocolVersion: 2 });
+    const pending = await importReceiptCapsule(stateDir, capsule.capsule);
+    const accepted = await acceptInboxEntry(stateDir, pending.entry.id);
+    assert.deepEqual(accepted.receipt.governance, source.governance);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

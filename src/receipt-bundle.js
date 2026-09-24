@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendReceipt, loadInbox, loadInboxEntry, loadReceipts, saveInboxEntry } from "./store.js";
+import { GOVERNANCE_FIELDS, normalizeGovernance } from "./evolution.js";
 
 export const CAPSULE_PREFIX = "ownhow:receipt-bundle:v1:";
 export const CAPSULE_V2_PREFIX = "ownhow:receipt-bundle:v2:";
@@ -82,7 +83,7 @@ function exportDetails(receipt, redactions) {
   const verifiedBy = details.verifiedBy ?? "unknown";
   if (!CONFIDENCE.has(confidence)) throw new Error("receipt.details.confidence is unsupported.");
   if (!VERIFIED_BY.has(verifiedBy)) throw new Error("receipt.details.verifiedBy is unsupported.");
-  return {
+  const exported = {
     summary: details.summary === null || details.summary === undefined ? null : redact(textValue(details.summary, "receipt.details.summary"), redactions),
     evidence: stringArray(details.evidence ?? [], "receipt.details.evidence", 32).map((item) => redact(item, redactions)),
     artifacts: stringArray(details.artifacts ?? [], "receipt.details.artifacts", 32).map((item) => redact(item, redactions)),
@@ -90,6 +91,15 @@ function exportDetails(receipt, redactions) {
     confidence,
     verifiedBy
   };
+  if (receipt.governance) exported.governance = normalizeGovernance(receipt.governance);
+  return exported;
+}
+
+function parseGovernance(value, label = "receipt.details.governance") {
+  const legacyFields = ["discovered", "matched", "loaded", "used", "followed", "reused", "verified"];
+  const keys = Object.keys(object(value, label));
+  exactKeys(value, keys.includes("used") && !keys.includes("actualUsed") ? legacyFields : GOVERNANCE_FIELDS, label);
+  return normalizeGovernance(value);
 }
 
 function exportReceipt(receipt, redactions, protocolVersion) {
@@ -169,13 +179,16 @@ export function parseReceiptCapsule(input) {
   stringArray(envelope.receipt.plan.augment, "receipt.plan.augment");
   stringArray(envelope.receipt.plan.risks, "receipt.plan.risks");
   if (protocolVersion === 2) {
-    exactKeys(envelope.receipt.details, ["summary", "evidence", "artifacts", "blockers", "confidence", "verifiedBy"], "receipt.details");
+    const detailKeys = ["summary", "evidence", "artifacts", "blockers", "confidence", "verifiedBy"];
+    if (Object.hasOwn(envelope.receipt.details, "governance")) detailKeys.push("governance");
+    exactKeys(envelope.receipt.details, detailKeys, "receipt.details");
     textValue(envelope.receipt.details.summary, "receipt.details.summary", { nullable: true });
     stringArray(envelope.receipt.details.evidence, "receipt.details.evidence", 32);
     stringArray(envelope.receipt.details.artifacts, "receipt.details.artifacts", 32);
     stringArray(envelope.receipt.details.blockers, "receipt.details.blockers", 32);
     if (!CONFIDENCE.has(envelope.receipt.details.confidence)) throw new Error("receipt.details.confidence is unsupported.");
     if (!VERIFIED_BY.has(envelope.receipt.details.verifiedBy)) throw new Error("receipt.details.verifiedBy is unsupported.");
+    if (Object.hasOwn(envelope.receipt.details, "governance")) parseGovernance(envelope.receipt.details.governance);
   }
   exactKeys(envelope.privacy, ["redactions"], "privacy");
   stringArray(envelope.privacy.redactions, "privacy.redactions", 16);
@@ -245,6 +258,7 @@ export async function acceptInboxEntry(stateDir, entryId) {
         verifiedBy: "unknown"
       },
       plan: bundle.receipt.plan,
+      ...(bundle.receipt.details?.governance ? { governance: bundle.receipt.details.governance } : {}),
       runtime: bundle.source.runtime,
       provenance: {
         transport: entry.transport,

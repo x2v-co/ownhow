@@ -45,13 +45,26 @@ updates permit stable patch versions only. A minor/major update returns
 `ownhow upgrade --disable-auto` disables policy. Nothing installs a daemon or
 registers a remote subscriber automatically.
 
-## Agent task-start hook
+## Agent task-start hook (gstack-style)
 
-Have the host invoke this at task boundaries, before starting work:
+OwnHow can use the same task-boundary experience as gstack while keeping its
+release verification and CLI/Skill transaction boundary. Before loading a new
+workflow, have the host invoke:
 
 ```bash
 ownhow upgrade --auto --json
 ```
+
+Interpret the result without prompting on every task: `updated` means report the
+version change and start a new session; `up_to_date`, `check_throttled`, and
+`auto_disabled` mean continue. If automatic updates are disabled and the user
+asked about updates, run `ownhow upgrade --check --json`; show `update_available`
+and ask whether to apply, enroll patch auto-updates, or snooze this version.
+Snooze with `ownhow upgrade --snooze --notice <token> --json`; repeated
+deferrals use 24-hour, 48-hour, and one-week delays. `approval_required` always
+needs explicit approval for a minor or major release. Failed checks are
+reported once and must not create a retry loop. Never enable automatic updates
+without the user's explicit choice.
 
 The enabled policy is checked at most once per 24 hours after a successful
 check/update. Failed downloads are retryable. Start a new session when
@@ -72,7 +85,7 @@ and optionally `OWNHOW_UPDATE_WEBHOOK_TOKEN` (Bearer credential). On release,
 the workflow posts:
 
 ```json
-{"event":"ownhow.release","version":"0.6.1","notice":"ownhow:update:v1:0.6.1","releaseUrl":"https://github.com/x2v-co/ownhow/releases/tag/v0.6.1"}
+{"event":"ownhow.release","version":"0.8.0","notice":"ownhow:update:v1:0.8.0","releaseUrl":"https://github.com/x2v-co/ownhow/releases/tag/v0.8.0"}
 ```
 
 Your gateway routes the notice to enrolled Agents. Queue it until each Agent's

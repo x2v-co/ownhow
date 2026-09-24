@@ -78,7 +78,52 @@ test("records lifecycle states and marks authoritative runtime output as session
   const skillFile = path.join(fixtures, ".hermes", "skills", "research", "SKILL.md");
   const inventory = await scanRoots({ roots: [path.dirname(skillFile)], runtime: "hermes", runtimeState: { authoritative: true, skillFiles: [skillFile] } });
   assert.equal(inventory.analysisScope, "session-visible");
-  assert.deepEqual(inventory.components[0].lifecycle, { discovered: true, installed: true, enabled: true, sessionVisible: true });
+  assert.deepEqual(inventory.components[0].lifecycle, { discovered: true, installed: true, enabled: true, sessionVisible: true, actualUsed: null });
+});
+
+test("keeps actual Skill use separate from session visibility when the host reports it", async () => {
+  const skillFile = path.join(fixtures, ".hermes", "skills", "research", "SKILL.md");
+  const inventory = await scanRoots({
+    roots: [path.dirname(skillFile)], runtime: "hermes",
+    runtimeState: { authoritative: true, skillFiles: [skillFile], actualUsedSkillNames: new Set(["hermes-research"]) }
+  });
+  assert.equal(inventory.components[0].lifecycle.sessionVisible, true);
+  assert.equal(inventory.components[0].lifecycle.actualUsed, true);
+});
+
+test("authoritative synthetic skills skip filesystem discovery", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-synthetic-scan-"));
+  try {
+    await mkdir(path.join(temporary, "hidden"), { recursive: true });
+    await writeFile(path.join(temporary, "hidden", "SKILL.md"), "---\nname: hidden\ndescription: should not be discovered\n---\n");
+    const inventory = await scanRoots({
+      roots: [temporary],
+      runtime: "openclaw",
+      runtimeState: {
+        authoritative: true,
+        syntheticSkills: [{ name: "active", description: "reported by the host" }]
+      }
+    });
+    assert.deepEqual(inventory.components.map((item) => item.name), ["active"]);
+    assert.equal(inventory.analysisScope, "session-visible");
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("canonical root aliases are walked once", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-canonical-scan-"));
+  const alias = `${temporary}-alias`;
+  try {
+    await mkdir(path.join(temporary, "skill"), { recursive: true });
+    await writeFile(path.join(temporary, "skill", "SKILL.md"), "---\nname: canonical\ndescription: one source\n---\n");
+    await symlink(temporary, alias, "dir");
+    const inventory = await scanRoots({ roots: [temporary, alias], runtime: "codex", home: temporary });
+    assert.deepEqual(inventory.components.filter((item) => item.kind === "skill").map((item) => item.name), ["canonical"]);
+  } finally {
+    await rm(alias, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("analyze ignores discovered-only candidates outside the session-visible scope", () => {

@@ -42,7 +42,16 @@ Base64url has no padding. All text fields must be within their declared limits a
       "artifacts": ["onboarding-report.md"],
       "blockers": ["No approved interview citations"],
       "confidence": "low",
-      "verifiedBy": "user"
+      "verifiedBy": "user",
+      "governance": {
+        "discovered": true,
+        "matched": true,
+        "loaded": true,
+        "actualUsed": true,
+        "followed": false,
+        "reused": false,
+        "verified": true
+      }
     }
   },
   "privacy": {
@@ -52,7 +61,7 @@ Base64url has no padding. All text fields must be within their declared limits a
 }
 ```
 
-Allowed runtimes are `codex`, `hermes`, `claude`, `pi`, `opencode`, `openclaw`, `all`, and `unknown`. Outcome is `success` or `failure`. Correction and summary may be `null`. Confidence is `low`, `medium`, `high`, or `unknown`. `verifiedBy` is `user`, `agent`, `automated`, or `unknown`. Evidence, artifacts, and blockers contain at most 32 items each.
+Allowed runtimes are `codex`, `hermes`, `claude`, `pi`, `opencode`, `openclaw`, `all`, and `unknown`. Outcome is `success` or `failure`. Correction and summary may be `null`. Confidence is `low`, `medium`, `high`, or `unknown`. `verifiedBy` is `user`, `agent`, `automated`, or `unknown`. Evidence, artifacts, and blockers contain at most 32 items each. `governance` is optional; when present it contains only boolean or `null` fields `discovered`, `matched`, `loaded`, `actualUsed`, `followed`, `reused`, and `verified`. `actualUsed` is an Agent report, not proof that a Skill executed.
 
 As in v1, exported `methodId`, `primary`, and `augment` are intentionally empty to avoid disclosing local component identifiers. Unknown or missing fields are invalid.
 

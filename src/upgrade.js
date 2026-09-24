@@ -13,6 +13,7 @@ export const RELEASE_URL = "https://github.com/x2v-co/ownhow/releases/latest/dow
 export const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const NOTICE = "ownhow:update:v1:";
+const SNOOZE_DELAYS_MS = [24 * 60 * 60 * 1000, 48 * 60 * 60 * 1000, 7 * 24 * 60 * 60 * 1000];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const exists = async (file) => Boolean(await lstat(file).catch((error) => { if (error.code === "ENOENT") return null; throw error; }));
 export function compareVersions(a, b) {
@@ -30,6 +31,30 @@ function noticeVersion(value) {
   const version = value.slice(NOTICE.length); compareVersions(version, version); return version;
 }
 function releaseUrl(version, file) { return `https://github.com/x2v-co/ownhow/releases/download/v${version}/${file}`; }
+function promptForUpgrade(currentVersion, targetVersion) {
+  return {
+    kind: "ownhow-upgrade",
+    message: `OwnHow ${targetVersion} is available (current ${currentVersion}). Upgrade now?`,
+    choices: [
+      { id: "apply", label: "Upgrade now" },
+      { id: "enable_auto", label: "Always keep me up to date" },
+      { id: "snooze", label: "Not now" }
+    ]
+  };
+}
+function snoozeState(config, version, now = Date.now()) {
+  if (config.snoozeVersion !== version || !Number.isFinite(Date.parse(config.snoozedUntil ?? ""))) return null;
+  const until = Date.parse(config.snoozedUntil);
+  if (until <= now) return null;
+  return { version, level: config.snoozeLevel, until: config.snoozedUntil };
+}
+function clearSnooze(config) {
+  const next = { ...config };
+  delete next.snoozeVersion;
+  delete next.snoozeLevel;
+  delete next.snoozedUntil;
+  return next;
+}
 async function download(url, limit) {
   const response = await fetch(url, { signal: AbortSignal.timeout(30000), headers: { "User-Agent": "OwnHow-Updater" } });
   if (!response.ok) throw new Error(`Release download failed: HTTP ${response.status}`);
@@ -114,11 +139,11 @@ export async function upgrade(options, stateDir, dependencies = {}) {
   const config = await readJson(configFile, {});
   const root = path.resolve(options["install-dir"] ?? config.installDir ?? currentRoot);
   const automatic = Boolean(options.auto);
-  const modes = ["check", "apply", "auto", "enable-auto", "disable-auto", "recover"].filter((key) => options[key]);
-  if (modes.length > 1) throw new Error("Select one upgrade mode: check, apply, auto, enable-auto, disable-auto, or recover");
+  const modes = ["check", "apply", "auto", "enable-auto", "disable-auto", "snooze", "recover"].filter((key) => options[key]);
+  if (modes.length > 1) throw new Error("Select one upgrade mode: check, apply, auto, enable-auto, disable-auto, snooze, or recover");
   if (options.notice && options.version) throw new Error("Use either --notice or --version");
   if (automatic && (options["install-dir"] || options["skill-dir"])) throw new Error("Automatic updates use enrolled destinations; reconfigure with --enable-auto first");
-  const mutating = options.apply || automatic || options["enable-auto"] || options["disable-auto"] || options.recover;
+  const mutating = options.apply || automatic || options["enable-auto"] || options["disable-auto"] || options.snooze || options.recover;
   const updateDir = path.join(stateDir, "updates");
   const lock = path.join(updateDir, "lock");
   const journalFile = path.join(updateDir, "transaction.json");
@@ -130,7 +155,7 @@ export async function upgrade(options, stateDir, dependencies = {}) {
   try {
     if (mutating && await restore(journalFile)) return { status: "recovered", retryRequired: true, sessionReloadRequired: true };
     if (options.recover) return { status: "no_recovery_needed" };
-    if (options["disable-auto"]) { await writeJson(configFile, { ...config, enabled: false }); return { status: "auto_disabled" }; }
+    if (options["disable-auto"]) { await writeJson(configFile, { ...clearSnooze(config), enabled: false }); return { status: "auto_disabled" }; }
     if (automatic && !config.enabled) return { status: "auto_disabled" };
     if (options.apply || automatic || options["enable-auto"]) await writableTarget(root, Boolean(options["install-dir"] || config.installDir), path.resolve(stateDir));
     const requestedSkillDir = options["skill-dir"] ?? config.skillDir;
@@ -138,11 +163,19 @@ export async function upgrade(options, stateDir, dependencies = {}) {
     if (resolvedSkillDir && (path.resolve(stateDir) === resolvedSkillDir || path.resolve(stateDir).startsWith(`${resolvedSkillDir}${path.sep}`) || resolvedSkillDir.startsWith(`${path.resolve(stateDir)}${path.sep}`))) throw new Error("Skill destination must be outside OwnHow state");
     const skillDir = await skillTarget(resolvedSkillDir, root);
     if (options["enable-auto"]) {
-      await writeJson(configFile, { ...config, enabled: true, policy: "patch", installDir: root, skillDir });
+      await writeJson(configFile, { ...clearSnooze(config), enabled: true, policy: "patch", installDir: root, skillDir });
       return { status: "auto_enabled", policy: "patch", command: "ownhow upgrade --auto --json", note: "Host must invoke this command at task boundaries; no background daemon is installed." };
     }
     const requested = options.notice ? noticeVersion(options.notice) : options.version;
     if (requested) compareVersions(requested, requested);
+    if (options.snooze) {
+      if (!requested) throw new Error("Snooze requires --version or --notice");
+      const sameVersion = config.snoozeVersion === requested ? Number(config.snoozeLevel) : 0;
+      const level = Math.min(Number.isInteger(sameVersion) && sameVersion >= 0 ? sameVersion + 1 : 1, SNOOZE_DELAYS_MS.length);
+      const snoozedUntil = new Date(Date.now() + SNOOZE_DELAYS_MS[level - 1]).toISOString();
+      await writeJson(configFile, { ...config, snoozeVersion: requested, snoozeLevel: level, snoozedUntil });
+      return { status: "snoozed", targetVersion: requested, snoozeLevel: level, snoozedUntil, prompt: null };
+    }
     if (automatic && !requested && Date.now() - Date.parse(config.lastCheckedAt ?? "") < 86400000) return { status: "check_throttled" };
     const manifest = JSON.parse((await fetchBytes(requested ? releaseUrl(requested, "ownhow-update.json") : RELEASE_URL, 64 * 1024)).toString());
     compareVersions(manifest.version, manifest.version);
@@ -152,14 +185,21 @@ export async function upgrade(options, stateDir, dependencies = {}) {
     const report = { currentVersion: installed.version, targetVersion, installDir: root, skillDir, skillDelivery: skillDir ? "standalone" : "bundled-only", pluginUpdateRequired: !skillDir, sessionReloadRequired: false, sessionLoadedVersion: "unknown", notice: updateNotice(targetVersion) };
     if (compareVersions(targetVersion, installed.version) < 0) throw new Error("Refusing to downgrade OwnHow");
 
-    if (automatic && targetVersion.split(".").slice(0, 2).join(".") !== installed.version.split(".").slice(0, 2).join(".")) return { ...report, status: "approval_required", reason: "Automatic updates allow patch versions only" };
+    const activeSnooze = automatic ? snoozeState(config, targetVersion) : null;
+    if (activeSnooze) {
+      await writeJson(configFile, { ...config, lastCheckedAt: new Date().toISOString() });
+      return { ...report, status: "snoozed", snoozeLevel: activeSnooze.level, snoozedUntil: activeSnooze.until, prompt: null };
+    }
+    if (automatic && targetVersion.split(".").slice(0, 2).join(".") !== installed.version.split(".").slice(0, 2).join(".")) {
+      return { ...report, status: "approval_required", reason: "Automatic updates allow patch versions only", prompt: promptForUpgrade(installed.version, targetVersion) };
+    }
     let skillVersion = null;
     if (skillDir && await exists(skillDir)) skillVersion = parseFrontmatter(await readFile(path.join(skillDir, "SKILL.md"), "utf8")).version ?? null;
     if (await exists(root) && targetVersion === installed.version && (!skillDir || skillVersion === targetVersion)) {
-      if (automatic) await writeJson(configFile, { ...config, lastCheckedAt: new Date().toISOString() });
+      if (automatic) await writeJson(configFile, { ...clearSnooze(config), lastCheckedAt: new Date().toISOString() });
       return { ...report, status: "up_to_date", skillVersion: skillVersion ?? installed.version };
     }
-    if (!options.apply && !automatic) return { ...report, status: "update_available", skillVersion };
+    if (!options.apply && !automatic) return { ...report, status: "update_available", skillVersion, prompt: promptForUpgrade(installed.version, targetVersion) };
     const bytes = await fetchBytes(releaseUrl(targetVersion, "ownhow-bundle.json"), 8 * 1024 * 1024);
     if (hash(bytes) !== manifest.sha256) throw new Error("Release bundle checksum mismatch");
     const files = validateBundle(JSON.parse(bytes.toString()), targetVersion);
@@ -182,7 +222,7 @@ export async function upgrade(options, stateDir, dependencies = {}) {
       }
       await runSmoke(root);
       // Removing the journal commits the transaction. Backups are retained for inspection.
-      if (automatic) await writeJson(configFile, { ...config, lastCheckedAt: new Date().toISOString() });
+      if (automatic) await writeJson(configFile, { ...clearSnooze(config), lastCheckedAt: new Date().toISOString() });
       await rm(journalFile);
       return { ...report, status: "updated", cliVersion: targetVersion, skillVersion: targetVersion, verification: "passed", backups: targets.filter((item) => item.existed).map((item) => item.backup), cliPath: path.join(root, "src/cli.js"), sessionReloadRequired: true };
     } catch (error) {

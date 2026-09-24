@@ -13,14 +13,14 @@ Governance commands do not upload source files, call a model, or modify installe
 Install the CLI directly from this repository:
 
 ```bash
-npm install --global github:x2v-co/ownhow#v0.7.0
+npm install --global github:x2v-co/ownhow#v0.8.0
 ownhow --help
 ```
 
 Add the OwnHow marketplace and install the Codex Plugin (optional):
 
 ```bash
-codex plugin marketplace add x2v-co/ownhow --ref v0.7.0
+codex plugin marketplace add x2v-co/ownhow --ref v0.8.0
 codex plugin add ownhow@x2v
 ```
 
@@ -31,7 +31,7 @@ Start a new Codex chat after installing the Plugin. The Plugin provides the gove
 Install the standalone Hermes Skill into the active Hermes profile:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.7.0/skills/ownhow-governance/SKILL.md --yes
+hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.8.0/skills/ownhow-governance/SKILL.md --yes
 ```
 
 The CLI discovers active Hermes skills under `~/.hermes/skills` automatically, following Hermes' archive, support-directory, platform, environment, disabled-skill, symlink, and duplicate-name discovery rules. Use `--runtime hermes` to keep analysis scoped to Hermes, or `--root PATH` for a custom `HERMES_HOME`/profile.
@@ -54,7 +54,7 @@ The static inventory includes project Skills active at session startup. Claude C
 Install OwnHow as a Pi Package:
 
 ```bash
-pi install git:github.com/x2v-co/ownhow@v0.7.0
+pi install git:github.com/x2v-co/ownhow@v0.8.0
 ```
 
 OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and `.agents` discovery, settings filters, symlink deduplication, and Package-contributed Skills. Use `--runtime pi` for Pi-only analysis.
@@ -64,7 +64,7 @@ OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and 
 Install the standalone Skill in OpenCode's global Skill directory:
 
 ```bash
-git clone --branch v0.7.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.8.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 ln -s ~/.local/share/ownhow/skills/ownhow-governance ~/.config/opencode/skills/ownhow-governance
 ```
 
@@ -75,7 +75,7 @@ OwnHow uses `opencode debug skill` as the authoritative live inventory when Open
 Install the standalone Skill globally:
 
 ```bash
-git clone --branch v0.7.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.8.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global --as ownhow-governance
 ```
 
@@ -88,6 +88,44 @@ patch updates with `--enable-auto` / `--auto`. Releases can notify an Agent
 gateway through an optional webhook; Agents validate the official release
 before updating. See [Agent updates](docs/agent-updates.md) for enrollment,
 standalone versus Plugin handling, push delivery, and failure recovery.
+The task-boundary check follows a gstack-like flow: enrolled Agents run
+`ownhow upgrade --auto --json`, while unenrolled Agents get a read-only result
+that can be reviewed before applying. A declined version can be snoozed for
+24 hours, 48 hours, and then one week on repeated deferrals.
+
+## Optional usage telemetry
+
+OwnHow works without a server. Telemetry is **off by default** and local
+governance, resolution, receipts, and Personal Methods do not depend on it.
+Enable it only when you want to measure adoption or diagnose aggregate usage:
+
+```bash
+# Keep an aggregate event ledger on this machine (recommended starting point)
+ownhow telemetry enable --mode local
+ownhow telemetry status
+ownhow telemetry export
+
+# Explicitly opt in to a server; the endpoint must use HTTPS
+ownhow telemetry enable --mode remote --endpoint https://telemetry.example.invalid/events
+ownhow telemetry send
+
+# Stop collecting; existing local events remain until you remove them
+ownhow telemetry disable
+ownhow telemetry purge
+```
+
+The local ledger is stored under `<state>/telemetry/` (`~/.ownhow/telemetry/`
+by default). Remote mode sends only bucketed, aggregate counters and outcome
+categories: runtime/scope, command result, cache mode, latency, candidate and
+Skill counts, finding counts, whether a Personal Method was used, whether a
+correction was provided, and the verification category. It does not send task
+text, prompts, receipts, evidence, corrections, Skill or Plugin content,
+Personal Methods, filesystem paths, machine names, or user identity. The
+server receives statistics only: it cannot install, update, enable, disable,
+or execute anything on an Agent. Review the endpoint's retention and access
+policy before enabling remote mode. See [docs/telemetry.md](docs/telemetry.md)
+for the request contract and [SECURITY.md](SECURITY.md) for the privacy and
+trust-boundary details.
 
 ## Run from source
 
@@ -105,18 +143,18 @@ ownhow analyze --runtime openclaw
 ownhow doctor --runtime skywork
 ```
 
-`analyze` and `resolve` scan the live installation without writing state. Run `ownhow scan --runtime <runtime>` when you explicitly want to save a snapshot, or pass `--cached` to analyze or resolve that snapshot. State is stored in `~/.ownhow` by default. Use `--state PATH` for an isolated experiment, `--root PATH` to scan an explicit source, and `--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all` to select the runtime.
+`analyze` and `resolve` scan the live installation without writing inventory, Receipt, or Method state. If telemetry was explicitly enabled, they append one aggregate telemetry event. Run `ownhow scan --runtime <runtime>` when you explicitly want to save a snapshot, pass `--cached` to always use that snapshot, or pass `--fast` to use a matching snapshot when it is no older than five minutes and fall back to a live scan. Set `OWNHOW_FAST_TTL_MS` to change the fast-snapshot age limit. State is stored in `~/.ownhow` by default. Use `--state PATH` for an isolated experiment, `--root PATH` to scan an explicit source, and `--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all` to select the runtime.
 
-Inventory state is explicit: `discovered`, `installed`, `enabled`, and `sessionVisible` are tracked separately. Runtime adapters use their authoritative active/eligible reports when available; otherwise OwnHow marks installation and visibility as unknown and labels the scope as `runtime-roots`. Recursive fallback scanning excludes `.review/`, `.smoke/`, temporary worktrees, build output, and common caches. Conflict analysis and task resolution strictly use the `session-visible` scope when an authoritative report exists; fallback results are clearly labeled candidates with unknown activation state and never include excluded temporary checkouts.
+Inventory state is explicit: `discovered`, `installed`, `enabled`, and `sessionVisible` are tracked separately. `actualUsed` is separate execution evidence: it remains unknown unless the host or Agent reports that a Skill was used. Runtime adapters use their authoritative active/eligible reports when available; otherwise OwnHow marks installation and visibility as unknown and labels the scope as `runtime-roots`. Recursive fallback scanning excludes `.review/`, `.smoke/`, temporary worktrees, build output, and common caches. Conflict analysis and task resolution strictly use the `session-visible` scope when an authoritative report exists; fallback results are clearly labeled candidates with unknown activation state and never include excluded temporary checkouts.
 
 ## Runtime scope and diagnosis
 
 Select `--runtime` explicitly or set `OWNHOW_RUNTIME`. Without either, only an explicit `--root` scan is allowed; its runtime scope is `all` and component runtimes are inferred from known paths. Use `--runtime all` for cross-runtime comparison. A cached inventory must match the requested runtime; old snapshots without runtime metadata must be rescanned. `--cached` cannot be combined with `--root` or `--session-manifest`.
 
-Skywork directory discovery checks `~/.skywork/plugins`, `~/.skywork/skills`, and project `.skywork/skills`. These are candidates with unknown activation state. Use `--root` for another installation path. When a host provides the exact current-session list, pass `--session-manifest PATH` with this JSON shape:
+Skywork directory discovery checks `~/.skywork/plugins`, `~/.skywork/skills`, and project `.skywork/skills`. These are candidates with unknown activation state. Use `--root` for another installation path. When a host provides the exact current-session list, pass `--session-manifest PATH` with this JSON shape. `actualUsedSkillNames` is optional and must be exhaustive for the observed task/session; omit it when the host cannot prove usage:
 
 ```json
-{"runtime":"skywork","skillFiles":["/absolute/path/to/SKILL.md"]}
+{"schemaVersion":"1","runtime":"skywork","skills":[{"file":"/absolute/path/to/SKILL.md","name":"ownhow-governance"}],"activeSkillNames":["ownhow-governance"],"actualUsedSkillNames":["ownhow-governance"]}
 ```
 
 The manifest must match one selected runtime. OwnHow trusts this host report; it does not independently prove visibility. `ownhow doctor --runtime skywork` reports the CLI path/version, discovery scope, OwnHow components, and metadata parse errors without saving state.
@@ -162,9 +200,17 @@ ownhow record "verify login behavior" --runtime codex --plan ./login-plan.json \
   --verified-by agent
 ```
 
+When the Agent can report Skill usage directly, add a structured governance
+result rather than relying on prose:
+
+```bash
+ownhow record "verify login behavior" --runtime codex --plan ./login-plan.json \
+  --outcome success --governance '{"discovered":true,"matched":true,"loaded":true,"actualUsed":true,"verified":true}'
+```
+
 Record `--method-use loaded` or `followed` only when the saved plan contains a Personal Method and the assertion is true. Otherwise it remains `unknown`. Without `--plan`, the receipt explicitly records retrospective selection. Missing plans, changed digests, and mismatched tasks/runtimes are rejected. The digest checks consistency, not whether execution actually happened. `--sample-kind business|demo|workflow-test|unknown` separates business evidence from workflow tests.
 
-Plan attribution and sample kind are currently local receipt fields. Receipt Bundle v1/v2 export retains its existing schema and does not transmit these fields.
+Plan attribution and sample kind are currently local receipt fields. Governance evidence is separate from installation discovery: `discovered`, `matched`, `loaded`, `actualUsed`, `followed`, `reused`, and `verified` are typed boolean/null fields. Receipt Bundle v2 may carry these fields; v1 remains minimal. Unknown values stay `null` rather than being inferred from a directory scan.
 
 
 ## Recover receipts from remote Agents
@@ -184,7 +230,7 @@ ownhow record "research customer onboarding" \
 ownhow export --receipt latest --agent-id customer-research-a
 ```
 
-The Agent should return the single `ownhow:receipt-bundle:v2:...` line through the existing chat. v2 adds a summary, evidence, artifacts, blockers, confidence, and who verified the outcome. The capsule still omits raw conversation, Skill bodies, inventories, full local paths, and traces. OwnHow redacts common path and credential patterns, but the remote user or Agent must review every exported text field before sharing. Use `--protocol v1` only when the receiving installation has not upgraded to v0.6.0.
+The Agent should return the single `ownhow:receipt-bundle:v2:...` line through the existing chat. v2 adds a summary, evidence, artifacts, blockers, confidence, verifier, and optional structured governance evidence including `actualUsed`. The capsule still omits raw conversation, Skill bodies, inventories, full local paths, and traces. OwnHow redacts common path and credential patterns, but the remote user or Agent must review every exported text field before sharing. Use `--protocol v1` only when the receiving installation has not upgraded to v0.6.0.
 
 `export --receipt latest` selects the latest locally recorded Receipt by default and will not silently relabel an imported remote Receipt. Supplying `--runtime` also limits latest selection to that runtime and rejects an explicitly selected Receipt with a mismatched runtime. Re-exporting an imported Receipt requires both `--source imported` and `--reexport-imported` so provenance changes are deliberate.
 
@@ -222,6 +268,7 @@ See [Receipt Bundle Protocol v2](docs/receipt-bundle-v2.md) for the evidence-ric
 | `doctor` | Report paths, versions, scope, and metadata errors |
 | `methods` | List current Personal Methods and versions |
 | `rollback <method-id> --version VERSION` | Restore an older correction as a new revision |
+| `telemetry status|enable|disable|export|purge|send` | Inspect or explicitly manage aggregate local/remote usage telemetry (off by default) |
 
 Add `--json` to any command for structured output.
 
@@ -232,7 +279,7 @@ npm test
 npm run verify
 ```
 
-After editing the Plugin workflow, run `node scripts/sync-skills.js` to regenerate the standalone Skill. Verification checks that both workflows stay aligned. This release publishes the CLI, standalone Skill, and update bundle as v0.7.0.
+After editing the Plugin workflow, run `node scripts/sync-skills.js` to regenerate the standalone Skill. Verification checks that both workflows stay aligned. This release publishes the CLI, standalone Skill, and update bundle as v0.8.0.
 
 ## Runtime support and MVP boundary
 
@@ -240,12 +287,12 @@ After editing the Plugin workflow, run `node scripts/sync-skills.js` to regenera
 - Deterministic local analysis; no LLM resolver
 - Local JSON/JSONL state with evidence-rich Receipt details
 - Personal Method overlays do not rewrite upstream packages
-- No cloud account, hosted registry, team control plane, or automatic evolution
+- No required cloud account, hosted registry, team control plane, or automatic evolution; optional telemetry is aggregate-only and opt-in
 - Hermes' autonomous skill editing is not automatically trusted or converted into an OwnHow Personal Method; it must enter through Receipt → Proposal → explicit approval → Overlay.
 
 ## Privacy and security
 
-OwnHow state can reveal private workflows and local filesystem paths. Do not commit or upload `~/.ownhow`, real inventories, receipts, corrections, proposals, or Personal Methods. See [SECURITY.md](SECURITY.md) for the disclosure and test-data policy.
+OwnHow state can reveal private workflows and local filesystem paths. Do not commit or upload `~/.ownhow`, real inventories, receipts, corrections, proposals, or Personal Methods. Telemetry is disabled unless explicitly enabled and remote mode is an additional explicit opt-in; it excludes task text, receipts, Skill content, paths, and Personal Methods. See [SECURITY.md](SECURITY.md) for the disclosure and test-data policy.
 
 ## Contributing
 

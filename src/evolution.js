@@ -3,8 +3,43 @@ import { randomUUID } from "node:crypto";
 import { readJson, writeJson } from "./store.js";
 import { slugify } from "./text.js";
 
+export const GOVERNANCE_FIELDS = ["discovered", "matched", "loaded", "actualUsed", "followed", "reused", "verified"];
+const GOVERNANCE_ALIASES = new Set(["used"]);
+const booleanOrNull = (value, label) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "boolean") throw new Error(`${label} must be a boolean or null.`);
+  return value;
+};
+
+// Governance evidence is deliberately a small, typed summary. It records what
+// the Agent observed without copying task text, Skill bodies, or local paths.
+export function normalizeGovernance(value = {}, defaults = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("governance must be an object.");
+  const unsupported = Object.keys(value).filter((key) => !GOVERNANCE_FIELDS.includes(key) && !GOVERNANCE_ALIASES.has(key));
+  if (unsupported.length) throw new Error(`governance has unsupported fields: ${unsupported.join(", ")}`);
+  const actualUsed = Object.hasOwn(value, "actualUsed") ? value.actualUsed : Object.hasOwn(value, "used") ? value.used : undefined;
+  const defaultActualUsed = Object.hasOwn(defaults, "actualUsed") ? defaults.actualUsed : defaults.used;
+  return Object.fromEntries(GOVERNANCE_FIELDS.map((key) => [key, booleanOrNull(
+    key === "actualUsed" ? (actualUsed === undefined ? defaultActualUsed : actualUsed) : Object.hasOwn(value, key) ? value[key] : defaults[key],
+    `governance.${key}`
+  )]));
+}
+
 export function createReceipt(task, outcome, correction, plan, context = {}) {
   const list = (value) => Array.isArray(value) ? value.filter(Boolean).map(String) : [];
+  const methodUse = context.methodUse ?? "unknown";
+  const verifiedBy = context.verifiedBy ?? "unknown";
+  const hasMethod = Boolean(plan.methodId);
+  const methodUseKnown = methodUse === "loaded" || methodUse === "followed";
+  const governance = normalizeGovernance(context.governance, {
+    discovered: true,
+    matched: Boolean(plan.primary || plan.methodId),
+    loaded: hasMethod ? (methodUseKnown ? true : null) : false,
+    actualUsed: hasMethod ? (methodUseKnown ? true : null) : false,
+    followed: hasMethod ? (methodUse === "followed" ? true : methodUse === "loaded" ? false : null) : false,
+    reused: hasMethod ? (methodUseKnown ? true : null) : false,
+    verified: verifiedBy === "unknown" ? null : true
+  });
   return {
     id: `receipt-${Date.now()}-${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
@@ -13,14 +48,15 @@ export function createReceipt(task, outcome, correction, plan, context = {}) {
     correction: correction || null,
     runtime: context.runtime ?? "unknown",
     sampleKind: context.sampleKind ?? "unknown",
-    execution: { planId: context.executionPlan ? plan.id : null, planDigest: context.executionPlan ? plan.digest : null, attribution: context.executionPlan ? "caller-supplied-plan" : "retrospective-resolution", methodUse: context.methodUse ?? "unknown", methodVersion: plan.methodVersion ?? null },
+    execution: { planId: context.executionPlan ? plan.id : null, planDigest: context.executionPlan ? plan.digest : null, attribution: context.executionPlan ? "caller-supplied-plan" : "retrospective-resolution", methodUse, methodVersion: plan.methodVersion ?? null },
+    governance,
     details: {
       summary: context.summary || null,
       evidence: list(context.evidence),
       artifacts: list(context.artifacts),
       blockers: list(context.blockers),
       confidence: context.confidence ?? "unknown",
-      verifiedBy: context.verifiedBy ?? "unknown"
+      verifiedBy
     },
     plan: {
       methodId: plan.methodId,

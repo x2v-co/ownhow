@@ -10,7 +10,7 @@
       "name": "ownhow",
       "source": "./plugins/ownhow",
       "description": "Inspect, select, and improve the local AI methods you own.",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "author": {
         "name": "x2v-co",
         "email": "lgc.329@gmail.com"
@@ -19,7 +19,11 @@
       "repository": "https://github.com/x2v-co/ownhow",
       "license": "Apache-2.0",
       "category": "productivity",
-      "tags": ["skills", "governance", "personal-methods"]
+      "tags": [
+        "skills",
+        "governance",
+        "personal-methods"
+      ]
     }
   ]
 }

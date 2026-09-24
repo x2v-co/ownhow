@@ -176,3 +176,20 @@ test("records evidence and keeps latest export scoped to local receipts", async 
     await rm(temporary, { recursive: true, force: true });
   }
 });
+
+test("record accepts a structured governance result for remote feedback", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "ownhow-cli-governance-test-"));
+  const state = path.join(temporary, "state");
+  const cli = path.join(root, "src", "cli.js");
+  try {
+    await exec(process.execPath, [
+      cli, "record", "check ownhow", "--outcome", "success", "--runtime", "codex",
+      "--root", path.join(root, "skills"), "--state", state,
+      "--governance", JSON.stringify({ discovered: true, matched: true, loaded: true, actualUsed: true, followed: true, reused: true, verified: true })
+    ]);
+    const receipt = (await loadReceipts(state))[0];
+    assert.deepEqual(receipt.governance, { discovered: true, matched: true, loaded: true, actualUsed: true, followed: true, reused: true, verified: true });
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});

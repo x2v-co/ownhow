@@ -17,13 +17,52 @@ Do not commit or upload:
 
 Use synthetic fixtures and an isolated `--state` directory when reproducing an issue. Review all generated output before sharing it.
 
+## Optional Telemetry and Privacy
+
+Telemetry is disabled by default. OwnHow remains fully usable without a
+server, and enabling local telemetry is an explicit user choice:
+
+```bash
+ownhow telemetry enable --mode local
+ownhow telemetry status
+```
+
+A remote endpoint requires a separate explicit opt-in and an HTTPS URL:
+
+```bash
+ownhow telemetry enable --mode remote --endpoint https://telemetry.example.invalid/events
+ownhow telemetry send
+```
+
+Local telemetry is an aggregate event ledger under `<state>/telemetry/`.
+Events contain only bounded categories and buckets: runtime and discovery
+scope, command result, cache mode, latency, candidate/Skill/finding counts,
+Personal Method use, correction presence, and verification category. The
+schema intentionally excludes task text and prompts, receipts and evidence,
+corrections, Skill or Plugin bodies, Personal Methods, filesystem paths,
+machine names, and user identity. A pseudonymous agent identifier may be
+used to prevent duplicate counting; it is not an identity guarantee.
+
+Remote telemetry is statistics collection only. The endpoint cannot issue
+commands, install or update OwnHow, change an Agent's Skills, read local
+receipts, or control a session. Server operators should document retention,
+access, and deletion policies; users should review those policies before
+enabling remote mode. `telemetry disable` stops new events but preserves the
+local ledger until `telemetry purge` is explicitly run. Failed telemetry must
+not block the main OwnHow command.
+
 ## Trust Boundary
 
 OwnHow treats scanned Plugin and Skill content as untrusted data. Reports derived from static text are signals, not proof that a component performed an action. The CLI does not install, disable, delete, or modify scanned components.
 
+Telemetry endpoints are outside OwnHow's local trust boundary. OwnHow accepts
+only HTTPS endpoints without embedded credentials or URL fragments and sends
+the bounded aggregate event schema. It does not treat a server response as an
+instruction and has no remote-control channel.
+
 ## Remote Receipt Bundles
 
-The `ownhow:receipt-bundle:v1:` and `ownhow:receipt-bundle:v2:` capsules are untrusted copy-and-paste transports for remote Agent task metadata. Their SHA-256 digest detects payload changes after export, but does not authenticate the Agent, machine, user, or conversation. v2 additionally carries a summary, evidence, artifacts, blockers, confidence, and a self-asserted verifier label.
+The `ownhow:receipt-bundle:v1:` and `ownhow:receipt-bundle:v2:` capsules are untrusted copy-and-paste transports for remote Agent task metadata. Their SHA-256 digest detects payload changes after export, but does not authenticate the Agent, machine, user, or conversation. v2 additionally carries a summary, evidence, artifacts, blockers, confidence, a self-asserted verifier label, and optional typed governance evidence.
 
 - Import writes only to the pending Inbox; explicit `inbox accept` is required before a Receipt enters the evolution flow.
 - Imported text is validated as data and is never executed as a command or Agent instruction.
@@ -31,6 +70,7 @@ The `ownhow:receipt-bundle:v1:` and `ownhow:receipt-bundle:v2:` capsules are unt
 - Export omits raw conversations, inventories, Skill bodies, traces, and local component identifiers. It redacts common path and credential patterns across task details, but cannot guarantee removal of all confidential data.
 - Export selects local Receipts by default. Re-exporting an imported Receipt requires explicit source selection and an explicit re-export flag to reduce accidental source relabeling.
 - Review the source label, task, correction, redaction notices, and customer confidentiality before accepting. A source `agentId` is a self-asserted label, not verified identity.
+- Governance evidence (`discovered`, `matched`, `loaded`, `actualUsed`, `followed`, `reused`, and `verified`) describes what the sending Agent reports; it does not prove that a Skill ran.
 - Duplicate bundle, digest, and source Receipt IDs are imported idempotently. Rejected imports remain as local audit records rather than being deleted.
 
 ## Inventory Scope

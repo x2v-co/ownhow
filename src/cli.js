@@ -8,7 +8,9 @@ import { acceptInboxEntry, createReceiptCapsule, importReceiptCapsule, rejectInb
 import { planDigest, resolveTask } from "./resolver.js";
 import { upgrade } from "./upgrade.js";
 import { runtimeRoots, scanRoots, scanRuntime } from "./scanner.js";
+import { loadSessionManifest, summarizeLifecycle } from "./session-manifest.js";
 import { appendReceipt, readJson, writeJson, loadInbox, loadInboxEntry, loadInventory, loadMethods, loadReceipts, saveInventory, stateDirectory } from "./store.js";
+import { configureTelemetry, disableTelemetry, exportTelemetry, purgeTelemetry, recordTelemetryEvent, sendTelemetry, telemetryStatus } from "./telemetry.js";
 
 function parseArgs(argv) {
   const positional = [];
@@ -18,7 +20,7 @@ function parseArgs(argv) {
     const value = argv[index];
     if (!value.startsWith("--")) { positional.push(value); continue; }
     const key = value.slice(2);
-    if (["json", "help", "cached", "reexport-imported", "apply", "check", "auto", "enable-auto", "disable-auto", "recover"].includes(key)) { options[key] = true; continue; }
+    if (["json", "help", "cached", "fast", "reexport-imported", "apply", "check", "auto", "enable-auto", "disable-auto", "snooze", "recover"].includes(key)) { options[key] = true; continue; }
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) throw new Error(`Missing value for --${key}`);
     index += 1;
@@ -34,9 +36,9 @@ function help() {
 
 Usage:
   ownhow scan [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--state PATH] [--json]
-  ownhow analyze [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow resolve <task> [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached] [--state PATH] [--json]
-  ownhow record <task> --outcome success|failure [--correction TEXT] [--summary TEXT] [--evidence TEXT] [--artifact PATH] [--blocker TEXT] [--confidence low|medium|high] [--verified-by user|agent|automated|unknown] [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached] [--state PATH] [--json]
+  ownhow analyze [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached|--fast] [--state PATH] [--json]
+  ownhow resolve <task> [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached|--fast] [--state PATH] [--json]
+  ownhow record <task> --outcome success|failure [--correction TEXT] [--summary TEXT] [--evidence TEXT] [--artifact PATH] [--blocker TEXT] [--confidence low|medium|high] [--verified-by user|agent|automated|unknown] [--governance JSON] [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--root PATH] [--cached|--fast] [--state PATH] [--json]
   ownhow export --receipt latest|ID --agent-id ID [--source local|imported|all] [--reexport-imported] [--protocol v1|v2] [--runtime codex|hermes|claude|pi|opencode|openclaw|skywork|all] [--state PATH] [--json]
   ownhow import <capsule|-> [--state PATH] [--json]
   ownhow inbox [list|show|accept|reject] [import-id] [--state PATH] [--json]
@@ -50,19 +52,30 @@ Usage:
   ownhow upgrade --apply [--version VERSION|--notice NOTICE] [--install-dir PATH] [--skill-dir PATH] [--json]
   ownhow upgrade --enable-auto|--disable-auto [--install-dir PATH] [--skill-dir PATH] [--json]
   ownhow upgrade --auto [--notice NOTICE] [--json]
+  ownhow upgrade --snooze --version VERSION|--notice NOTICE [--json]
   ownhow upgrade --recover [--json]
+  ownhow telemetry status [--state PATH] [--json]
+  ownhow telemetry enable [--mode local|remote] [--endpoint HTTPS_URL] [--state PATH] [--json]
+  ownhow telemetry disable [--state PATH] [--json]
+  ownhow telemetry export [--state PATH] [--json]
+  ownhow telemetry purge [--state PATH] [--json]
+  ownhow telemetry send [--state PATH] [--json]
 
 Resolve: --save-plan PATH writes a reviewable execution plan (opt-in).
 Record: --plan PATH binds the actual plan; --method-use loaded|followed|unknown
         --sample-kind business|demo|workflow-test|unknown labels evidence.
-Scans: --session-manifest PATH reads {runtime, skillFiles: [absolute paths]} supplied by the host.
+Scans: --session-manifest PATH reads a host supplied manifest (legacy {runtime, skillFiles} or schema v1 {runtime, skills}).
 
 Analyze and resolve use the live installation by default and do not write state.
+Use --fast after an explicit scan to reuse a matching snapshot for up to five minutes; it falls back to a live read when the snapshot is missing or stale.
 Governance commands leave source methods unchanged; upgrade can replace explicitly selected OwnHow installations.`;
 }
 
 function output(value, json, formatter = null) { process.stdout.write(`${json || !formatter ? JSON.stringify(value, null, 2) : formatter(value)}\n`); }
 function requireTask(parts) { const task = parts.join(" ").trim(); if (!task) throw new Error("Task is required."); return task; }
+async function recordTelemetrySafely(stateDir, event) {
+  try { await recordTelemetryEvent(stateDir, event); } catch { /* telemetry must never block the primary command */ }
+}
 function runtimeFor(options) {
   const runtime = options.runtime ?? process.env.OWNHOW_RUNTIME ?? (options.root ? "all" : null);
   if (!runtime) throw new Error("Select --runtime explicitly (or set OWNHOW_RUNTIME). Use all only for cross-runtime comparison.");
@@ -73,14 +86,31 @@ async function rootsFor(options) { return options.root?.map((root) => path.resol
 function sourceRuntimeFor(options) { return options.root && runtimeFor(options) !== "all" ? runtimeFor(options) : "auto"; }
 async function liveInventory(options) {
   if (options["session-manifest"]) {
-    const manifest = await readJson(path.resolve(options["session-manifest"]));
-    if (!manifest || manifest.runtime === "all" || manifest.runtime !== runtimeFor(options) || !Array.isArray(manifest.skillFiles) || manifest.skillFiles.some((file) => typeof file !== "string" || !path.isAbsolute(file))) throw new Error("Session manifest must match --runtime and contain absolute skillFiles paths.");
-    return scanRoots({ roots: [], runtime: manifest.runtime, runtimeState: { authoritative: true, skillFiles: manifest.skillFiles } });
+    let manifest;
+    try { manifest = await loadSessionManifest(options["session-manifest"], { runtime: runtimeFor(options) }); }
+    catch (error) { throw new Error(`Session manifest must match --runtime and contain valid entries: ${error.message}`); }
+    return scanRoots({ roots: [], runtime: manifest.runtime, runtimeState: {
+      authoritative: true,
+      skillFiles: manifest.skillFiles,
+      syntheticSkills: manifest.syntheticSkills,
+      activeSkillNames: manifest.activeSkillNames.length ? new Set(manifest.activeSkillNames) : null,
+      actualUsedSkillNames: manifest.actualUsedSkillNames ? new Set(manifest.actualUsedSkillNames) : null,
+      plugins: manifest.plugins
+    } });
   }
   const inventory = options.root ? await scanRoots({ roots: await rootsFor(options), runtime: sourceRuntimeFor(options) }) : await scanRuntime({ runtime: runtimeFor(options) });
   return { ...inventory, runtime: runtimeFor(options) };
 }
 async function inventoryFor(options, stateDir) {
+  if (options.fast && options.cached) throw new Error("--fast cannot be combined with --cached.");
+  if (options.fast && (options["session-manifest"] || options.root)) throw new Error("--fast cannot be combined with --root or --session-manifest; use --cached after an explicit scan.");
+  if (options.fast) {
+    const cached = await loadInventory(stateDir).catch(() => null);
+    const runtime = runtimeFor(options);
+    const ttl = Number(process.env.OWNHOW_FAST_TTL_MS ?? 5 * 60 * 1000);
+    const generated = cached?.generatedAt ? Date.parse(cached.generatedAt) : NaN;
+    if (cached && cached.runtime === runtime && Number.isFinite(generated) && Date.now() - generated >= 0 && Date.now() - generated <= (Number.isFinite(ttl) && ttl > 0 ? ttl : 5 * 60 * 1000)) return cached;
+  }
   if (!options.cached) return liveInventory(options);
   if (options["session-manifest"] || options.root) throw new Error("--cached cannot be combined with --root or --session-manifest; rescan the requested sources instead.");
   const inventory = await loadInventory(stateDir);
@@ -120,6 +150,38 @@ async function main() {
   if (!command || command === "help" || options.help) { process.stdout.write(`${help()}\n`); return; }
   const stateDir = stateDirectory(options.state);
 
+  if (command === "telemetry") {
+    const [action] = positional;
+    if (!action || action === "status") {
+      output(await telemetryStatus(stateDir), options.json, (value) => `Mode: ${value.mode}\nEvents: ${value.events}\nPending: ${value.pendingEvents}\nData: ${value.dataPolicy}`);
+      return;
+    }
+    if (action === "enable") {
+      const config = await configureTelemetry(stateDir, { mode: options.mode ?? "local", endpoint: options.endpoint ?? null });
+      output(config, options.json, (value) => `Telemetry enabled (${value.mode})${value.endpoint ? `\nEndpoint: ${value.endpoint}` : ""}`);
+      return;
+    }
+    if (action === "disable") {
+      const config = await disableTelemetry(stateDir);
+      output(config, options.json, () => "Telemetry disabled. Existing local events were retained.");
+      return;
+    }
+    if (action === "export") {
+      output(await exportTelemetry(stateDir), options.json);
+      return;
+    }
+    if (action === "purge") {
+      output(await purgeTelemetry(stateDir), options.json, (value) => `Telemetry events purged. Remaining: ${value.events}`);
+      return;
+    }
+    if (action === "send") {
+      const result = await sendTelemetry(stateDir);
+      output(result, options.json, (value) => `Sent: ${value.sent}\nPending: ${value.pending}`);
+      return;
+    }
+    throw new Error("Telemetry action must be status, enable, disable, export, purge, or send.");
+  }
+
   if (command === "scan") {
     const inventory = await liveInventory(options);
     await saveInventory(stateDir, inventory);
@@ -127,12 +189,20 @@ async function main() {
     return;
   }
   if (command === "analyze") {
+    const startedAt = Date.now();
     const inventory = await inventoryFor(options, stateDir);
-    const analysis = { ...analyzeInventory(inventory), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
+    const analysis = { ...analyzeInventory(inventory), inventoryMode: options.cached ? "cached" : options.fast ? "fast" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
+    await recordTelemetrySafely(stateDir, {
+      type: "analyze", runtime: inventory.runtime ?? runtimeFor(options), scope: inventory.analysisScope,
+      cache: analysis.inventoryMode, latencyMs: Date.now() - startedAt,
+      skillCount: analysis.coverage?.totalSkills, findingCount: analysis.findings?.length,
+      actionableFindingCount: analysis.actionableFindings?.length
+    });
     output(analysis, options.json, formatAnalysis);
     return;
   }
   if (command === "resolve" || command === "record") {
+    const startedAt = Date.now();
     const task = requireTask(positional);
     if (options.plan && command !== "record") throw new Error("--plan is only supported by record; resolve creates a new plan.");
     const suppliedPlan = options.plan ? await readJson(path.resolve(options.plan)) : null;
@@ -140,10 +210,16 @@ async function main() {
     if (suppliedPlan && (suppliedPlan.schemaVersion !== "0.3" || !Array.isArray(suppliedPlan.augment) || !Array.isArray(suppliedPlan.risks))) throw new Error("Invalid saved execution plan.");
     if (suppliedPlan && suppliedPlan.runtime !== runtimeFor(options)) throw new Error("Saved plan runtime does not match --runtime.");
     const inventory = suppliedPlan ? null : await inventoryFor(options, stateDir);
-    const plan = suppliedPlan ?? { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
+    const plan = suppliedPlan ?? { ...resolveTask(inventory, task, await loadMethods(stateDir)), inventoryMode: options.cached ? "cached" : options.fast ? "fast" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
     if (suppliedPlan && (plan.task !== task || plan.digest !== planDigest(plan) || plan.id !== `plan-${plan.digest}`)) throw new Error("Plan task or digest does not match. Regenerate and review the execution plan.");
     if (command === "resolve") {
       if (options["save-plan"]) await writeJson(path.resolve(options["save-plan"]), plan);
+      await recordTelemetrySafely(stateDir, {
+        type: "resolve", runtime: plan.runtime ?? runtimeFor(options), scope: plan.analysisScope,
+        result: plan.primary ? "matched" : "no_match", cache: plan.inventoryMode,
+        latencyMs: Date.now() - startedAt, candidateCount: plan.candidateCount,
+        methodUsed: Boolean(plan.methodId)
+      });
       output(plan, options.json, formatPlan); return;
     }
     const sampleKind = options["sample-kind"] ?? "unknown";
@@ -156,6 +232,10 @@ async function main() {
     const verifiedBy = options["verified-by"] ?? "unknown";
     if (!["low", "medium", "high", "unknown"].includes(confidence)) throw new Error("--confidence must be low, medium, high, or unknown.");
     if (!["user", "agent", "automated", "unknown"].includes(verifiedBy)) throw new Error("--verified-by must be user, agent, automated, or unknown.");
+    let governance;
+    if (options.governance !== undefined) {
+      try { governance = JSON.parse(options.governance); } catch { throw new Error("--governance must be valid JSON."); }
+    }
     const receipt = createReceipt(task, options.outcome, options.correction, plan, {
       runtime: plan.runtime ?? runtimeFor(options),
       sampleKind, methodUse, executionPlan: Boolean(suppliedPlan),
@@ -164,9 +244,15 @@ async function main() {
       artifacts: options.artifact,
       blockers: options.blocker,
       confidence,
-      verifiedBy
+      verifiedBy,
+      governance
     });
     await appendReceipt(stateDir, receipt);
+    await recordTelemetrySafely(stateDir, {
+      type: "record", runtime: receipt.runtime ?? runtimeFor(options), result: receipt.outcome,
+      latencyMs: Date.now() - startedAt, methodUsed: Boolean(plan.methodId),
+      correctionProvided: Boolean(receipt.correction), verifiedBy
+    });
     output(receipt, options.json, (value) => `Recorded ${value.id}\nOutcome: ${value.outcome}\nCorrection: ${value.correction ?? "none"}`);
     return;
   }
@@ -246,10 +332,17 @@ async function main() {
     return;
   }
   if (command === "doctor") {
+    const startedAt = Date.now();
     const inventory = await liveInventory(options);
     const metadata = await readJson(new URL("../package.json", import.meta.url));
     const skills = inventory.components.filter((item) => item.kind === "skill");
-    output({ cliVersion: metadata.version, nodeVersion: process.version, nodePath: process.execPath, cliPath: process.argv[1], runtime: runtimeFor(options), scope: inventory.analysisScope, roots: inventory.roots, ownhowComponents: inventory.components.filter((item) => item.name.includes("ownhow") || item.plugin === "ownhow" || item.name === "govern-personal-methods").map((item) => ({ name: item.name, version: item.version, source: item.source, lifecycle: item.lifecycle })), metadataErrors: skills.filter((item) => item.metadataError).map((item) => ({ source: item.source, error: item.metadataError })), note: inventory.authoritative ? "Using host-reported or adapter-qualified visibility." : "File discovery only; installed, enabled and current-session visibility are unknown." }, options.json);
+    const lifecycle = summarizeLifecycle(inventory.components);
+    const report = { cliVersion: metadata.version, nodeVersion: process.version, nodePath: process.execPath, cliPath: process.argv[1], runtime: runtimeFor(options), scope: inventory.analysisScope, authoritative: inventory.authoritative === true, roots: inventory.roots, lifecycle, ownhowComponents: inventory.components.filter((item) => item.name.includes("ownhow") || item.plugin === "ownhow" || item.name === "govern-personal-methods").map((item) => ({ name: item.name, version: item.version, source: item.source, lifecycle: item.lifecycle })), metadataErrors: skills.filter((item) => item.metadataError).map((item) => ({ source: item.source, error: item.metadataError })), note: inventory.authoritative ? "Using host-reported or adapter-qualified visibility." : "File discovery only; installed, enabled and current-session visibility are unknown." };
+    await recordTelemetrySafely(stateDir, {
+      type: "doctor", runtime: report.runtime, scope: report.scope, result: report.metadataErrors.length ? "failure" : "success",
+      latencyMs: Date.now() - startedAt, skillCount: skills.length, findingCount: report.metadataErrors.length
+    });
+    output(report, options.json);
     return;
   }
   if (command === "methods") { output(await loadMethods(stateDir), options.json); return; }
@@ -258,7 +351,9 @@ async function main() {
     output(await rollbackMethod(stateDir, positional[0], options.version), options.json); return;
   }
   if (command === "upgrade") {
+    const startedAt = Date.now();
     const result = await upgrade(options, stateDir);
+    await recordTelemetrySafely(stateDir, { type: "upgrade", result: "success", latencyMs: Date.now() - startedAt });
     output(result, options.json, (value) => `${value.status}: ${value.currentVersion ?? value.cliVersion ?? "unknown"}${value.targetVersion ? ` -> ${value.targetVersion}` : ""}${value.sessionReloadRequired ? "\nStart a new Agent session to load the updated Skill." : ""}`);
     return;
   }

@@ -1,6 +1,6 @@
 {
   "name": "ownhow",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Inspect, select, and improve the local AI methods you own.",
   "author": {
     "name": "x2v-co",
@@ -10,7 +10,13 @@
   "homepage": "https://ownhow.dev",
   "repository": "https://github.com/x2v-co/ownhow",
   "license": "Apache-2.0",
-  "keywords": ["codex", "skills", "plugins", "governance", "personal-methods"],
+  "keywords": [
+    "codex",
+    "skills",
+    "plugins",
+    "governance",
+    "personal-methods"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "OwnHow",

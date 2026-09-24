@@ -134,11 +134,19 @@ test("cached inventory must match the requested runtime and cannot hide a sessio
   await assert.rejects(exec(process.execPath, [cli, "resolve", "ownhow", "--runtime", "codex", ...cached, "--session-manifest", "ignored.json"]), /cannot be combined/);
 }));
 
+test("fast mode reuses a fresh matching snapshot and rejects explicit roots", async () => temporary(async (dir) => {
+  const cli = path.join(root, "src", "cli.js");
+  await exec(process.execPath, [cli, "scan", "--runtime", "codex", "--root", path.join(root, "skills"), "--state", dir]);
+  const { stdout } = await exec(process.execPath, [cli, "resolve", "ownhow", "--runtime", "codex", "--fast", "--state", dir, "--json"]);
+  assert.equal(JSON.parse(stdout).inventoryMode, "fast");
+  await assert.rejects(exec(process.execPath, [cli, "resolve", "ownhow", "--runtime", "codex", "--fast", "--root", path.join(root, "skills"), "--state", dir]), /cannot be combined/);
+}));
+
 test("host manifest restricts scope; doctor reports paths without creating state", async () => temporary(async (dir) => {
   const file = path.join(dir, "manifest.json"); const state = path.join(dir, "state");
   await writeFile(file, JSON.stringify({ runtime: "skywork", skillFiles: [path.join(root, "skills", "ownhow-governance", "SKILL.md")] }));
   const { stdout } = await exec(process.execPath, [path.join(root, "src", "cli.js"), "doctor", "--runtime", "skywork", "--session-manifest", file, "--state", state, "--json"]);
-  const doctor = JSON.parse(stdout); assert.equal(doctor.scope, "session-visible"); assert.equal(doctor.ownhowComponents.length, 1);
+  const doctor = JSON.parse(stdout); assert.equal(doctor.scope, "session-visible"); assert.equal(doctor.authoritative, true); assert.equal(doctor.ownhowComponents.length, 1); assert.equal(doctor.lifecycle.sessionVisible, 1); assert.equal(doctor.lifecycle.unknownSessionVisibility, 0);
   await assert.rejects(readFile(path.join(state, "inventory.json")));
 }));
 
