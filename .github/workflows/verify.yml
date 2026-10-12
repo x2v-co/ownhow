@@ -17,6 +17,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm install --ignore-scripts
+      - run: npm ci --ignore-scripts
       - run: npm run verify
       - run: npm pack --dry-run
