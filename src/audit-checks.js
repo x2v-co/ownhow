@@ -1,9 +1,11 @@
 import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
+import os from "node:os";
 
 export const REQUIRED_CHECKS = Object.freeze([
-  Object.freeze({ id: "python_bytecode", name: "Stale/mismatched Python bytecode", required: true, reference: "https://arxiv.org/abs/2610.10612" })
+  Object.freeze({ id: "python_bytecode", name: "Stale/mismatched Python bytecode", required: true, reference: "https://arxiv.org/abs/2610.10612" }),
+  Object.freeze({ id: "cross_session_residue", name: "Cross-session file residue", required: true, reference: "https://arxiv.org/abs/2610.13227" })
 ]);
 
 const MAX_ENTRIES = 10000;
@@ -45,7 +47,7 @@ function sourceForBytecode(file) {
   const directory = path.dirname(file);
   if (path.basename(directory) !== "__pycache__") return file.slice(0, -1);
   const match = path.basename(file).match(/^(.+?)\.[^.]+(?:\.opt-[^.]+)?\.pyc$/);
-  return match ? path.join(path.dirname(directory), `${match[1]}.py`) : null;
+  return path.join(path.dirname(directory), match ? `${match[1]}.py` : path.basename(file).slice(0, -1));
 }
 
 // Only a fixed helper runs. -I -S excludes the Skill/cwd, user site packages,
@@ -76,7 +78,6 @@ async function bytecodeCheck(root, files, traversalLimitations, hashSource) {
   for (const file of bytecode) {
     const source = sourceForBytecode(file);
     const fail = (reason, message, evidence = {}) => findings.push({ ...issue(reason, file, message), severity: "high", sourcePath: source, ...evidence });
-    if (!source) { limitations.push(issue("unknown_source_mapping", file, "Cannot map this cache filename to Python source.")); continue; }
     let sourceStat;
     try { sourceStat = await stat(source); }
     catch (error) {
@@ -123,9 +124,81 @@ async function bytecodeCheck(root, files, traversalLimitations, hashSource) {
   return result("python_bytecode", bytecode.length, findings, limitations);
 }
 
-export async function auditSkill(component, { hashSource = pythonSourceHash } = {}) {
+const RESIDUE_DIRECTORIES = new Set([
+  "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", "cache", "caches",
+  ".tmp", "tmp", ".temp", "temp", ".review", ".smoke", "output", "outputs", "out", "build", "dist",
+  ".state", "state", ".session", "session", ".sessions", "sessions", ".logs", "logs"
+]);
+function residuePath(root, file) {
+  const parts = path.relative(root, file).toLowerCase().split(path.sep);
+  return parts.slice(0, -1).some((part) => RESIDUE_DIRECTORIES.has(part))
+    || /\.(?:pyc|tmp|temp|bak|log|cache|swp|swo)$/.test(parts.at(-1))
+    || /^(?:\.?session(?:[-_.]state)?|\.?state|memory|history|last[-_]run|checkpoint)(?:[-_.].*)?\.(?:jsonl?|db|sqlite3?|pickle|pkl)$/.test(parts.at(-1));
+}
+
+function declaredPath(value, root, { cwd, home }) {
+  let target = String(value).trim();
+  if (!target || /[\x00-\x1f*?\[\]<>`]|:\/\//.test(target)) return null;
+  const variables = { HOME: home, WORKSPACE: cwd, CWD: cwd, SKILL_DIR: root };
+  target = target.replace(/\$\{(HOME|WORKSPACE|CWD|SKILL_DIR)\}|\$(HOME|WORKSPACE|CWD|SKILL_DIR)\b/g, (_, braced, bare) => variables[braced ?? bare]);
+  if (target === "~") target = home;
+  else if (target.startsWith("~/")) target = path.join(home, target.slice(2));
+  if (/[${}~]/.test(target) || !path.isAbsolute(target) && !/[/.\\]/.test(target)) return null;
+  return path.resolve(root, target);
+}
+
+// Resolve existing ancestors too: a declared write through an internal symlink
+// can escape the Skill even when the final output does not exist yet.
+async function canonicalTarget(file) {
+  try { return await realpath(file); }
+  catch (error) {
+    if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+    const parent = path.dirname(file);
+    return parent === file ? file : path.join(await canonicalTarget(parent), path.basename(file));
+  }
+}
+
+async function residueCheck(component, root, files, traversalLimitations, context) {
+  const findings = [], limitations = [...traversalLimitations];
+  const add = (reason, file, message, evidence = {}) => findings.push({ ...issue(reason, file, message), severity: "medium", provenance: "unknown", ...evidence });
+  for (const file of files) {
+    if (residuePath(root, file)) add("residue_candidate", file, "Temporary, cached, output or state artifact may persist between sessions; verify ownership and cleanup.");
+  }
+  const targets = [];
+  if (component.metadataError) limitations.push(issue("invalid_metadata", root, "Invalid Skill metadata prevents reliable declared-target inspection."));
+  for (const access of ["read", "write"]) {
+    for (const declaration of new Set(component[access === "read" ? "reads" : "writes"] ?? [])) {
+      const file = declaredPath(declaration, root, context);
+      if (!file) { limitations.push(issue("unresolved_declared_target", root, `Cannot resolve declared ${access} target: ${declaration}`)); continue; }
+      try {
+        const canonical = await canonicalTarget(file);
+        let exists = false;
+        let kind = null;
+        try { const info = await stat(file); exists = true; kind = info.isDirectory() ? "directory" : info.isFile() ? "file" : "special"; }
+        catch (error) { if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error; }
+        targets.push({ path: canonical, declaration, access, exists, kind, outsideSkill: !inside(root, canonical) });
+      } catch { limitations.push(issue("unreadable_declared_target", file, "Cannot inspect declared target.")); }
+    }
+  }
+  const writes = targets.filter((target) => target.access === "write");
+  for (const target of targets) {
+    if (target.access === "write" && target.outsideSkill) add("outside_skill_write", target.path, "Declared write escapes the Skill directory and may leave shared state for later sessions.", target);
+    else if (target.access === "write" && target.exists) add("existing_write_target", target.path, "Declared output already exists and may contain prior-session data; verify ownership and cleanup.", target);
+    const writable = writes.some((write) => write.path === target.path || write.kind === "directory" && inside(write.path, target.path));
+    if (target.access === "read" && target.exists && (target.outsideSkill || writable || residuePath(root, target.path))) {
+      add("persisted_state_read", target.path, "Existing shared or writable state is declared as input; verify provenance before later sessions reuse it.", target);
+    }
+  }
+  return { ...result("cross_session_residue", files.length + targets.length, findings, limitations), scope: "skill-files-and-declared-targets" };
+}
+
+export async function auditSkill(component, { hashSource = pythonSourceHash, cwd = process.cwd(), home = os.homedir() } = {}) {
   if (!path.isAbsolute(component.source ?? "")) return Object.fromEntries(REQUIRED_CHECKS.map(({ id }) => [id, result(id, 0, [], [issue("source_unavailable", component.source, "The runtime did not provide a local Skill directory.")])]));
   const root = await realpath(component.source).catch(() => component.source);
   const { files, limitations } = await artifacts(root);
-  return { python_bytecode: await bytecodeCheck(root, files, limitations, hashSource) };
+  const [pythonBytecode, crossSessionResidue] = await Promise.all([
+    bytecodeCheck(root, files, limitations, hashSource),
+    residueCheck(component, root, files, limitations, { cwd, home })
+  ]);
+  return { python_bytecode: pythonBytecode, cross_session_residue: crossSessionResidue };
 }

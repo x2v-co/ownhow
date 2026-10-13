@@ -61,11 +61,12 @@ test("detects stale mtime, stale size, orphan caches and source-less legacy byte
   await timestampCache(root, "__pycache__/module.cpython-313.pyc", { mtime: 1700000001 });
   await timestampCache(root, "module.pyc", { size: 100 });
   await timestampCache(root, "build/__pycache__/missing.cpython-313.pyc");
+  await timestampCache(root, "build/__pycache__/unusual.pyc");
   await timestampCache(root, "tmp/orphan.pyc");
   const checked = await bytecode(root);
   assert.equal(checked.status, "findings");
   assert.equal(checked.findings.filter((finding) => finding.reason === "timestamp_size_mismatch").length, 2);
-  assert.equal(checked.findings.filter((finding) => finding.reason === "missing_source").length, 2);
+  assert.equal(checked.findings.filter((finding) => finding.reason === "missing_source").length, 3);
   assert.ok(checked.findings.every((finding) => finding.severity === "high" && finding.sourcePath.endsWith(".py")));
 }));
 
@@ -143,3 +144,108 @@ test("old cached inventories and invisible Skills preserve mandatory-check uncer
   component.auditChecks = { python_bytecode: { status: "findings", findings: [{ severity: "high" }], limitations: [] } };
   assert.equal(analyzeInventory({ components: [component] }).findings.length, 0);
 });
+
+async function residueFixture(fn) {
+  await fixture(async (root) => {
+    const source = path.join(root, "skill"), cwd = path.join(root, "workspace"), home = path.join(root, "home");
+    await Promise.all([source, cwd, home].map((directory) => mkdir(directory)));
+    await writeFile(path.join(source, "SKILL.md"), await readFile(path.join(root, "SKILL.md")));
+    await fn({ source, cwd, home, root });
+  });
+}
+async function artifact(file, content = "synthetic prior-session data") {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, content);
+}
+
+test("residue inspection covers caches, temp files, outputs and persisted state inside a Skill", async () => residueFixture(async ({ source, cwd, home }) => {
+  const residue = ["tmp/session.txt", ".cache/data.bin", "outputs/result.json", "state.json", "history.sqlite", "session-state.json", "trace.log", "old.tmp"];
+  const assets = ["references/guide.md", "assets/input.json", "scripts/helper.py", "templates/config.json"];
+  await Promise.all([...residue, ...assets].map((relative) => artifact(path.join(source, relative))));
+  const before = await readFile(path.join(source, "tmp/session.txt"));
+  const checked = (await auditSkill({ source }, { cwd, home })).cross_session_residue;
+  assert.equal(checked.status, "findings");
+  assert.equal(checked.findings.length, residue.length);
+  assert.ok(checked.findings.every((finding) => finding.reason === "residue_candidate" && finding.provenance === "unknown"));
+  assert.deepEqual(await readFile(path.join(source, "tmp/session.txt")), before);
+  assert.ok(REQUIRED_CHECKS.some((check) => check.id === checked.id && check.required));
+}));
+
+test("declared workspace/home reads and writes expose existing residue and future external writes", async () => residueFixture(async ({ source, cwd, home }) => {
+  await artifact(path.join(home, ".cache/agent/state.json"));
+  await artifact(path.join(cwd, "tmp/session.tmp"));
+  await artifact(path.join(source, "assets/input.json"));
+  const checked = (await auditSkill({ source,
+    reads: ["~/.cache/agent/state.json", "${WORKSPACE}/tmp/session.tmp", "$SKILL_DIR/assets/input.json", "$WORKSPACE/missing.json"],
+    writes: ["$HOME/.cache/agent/state.json", "$CWD/tmp/session.tmp", "$WORKSPACE/future.json"]
+  }, { cwd, home })).cross_session_residue;
+  assert.equal(checked.findings.filter((finding) => finding.reason === "outside_skill_write").length, 3);
+  assert.equal(checked.findings.filter((finding) => finding.reason === "persisted_state_read").length, 2);
+  const future = checked.findings.find((finding) => finding.path === path.join(cwd, "future.json"));
+  assert.equal(future.exists, false);
+  assert.equal(future.outsideSkill, true);
+  await assert.rejects(access(path.join(cwd, "future.json")), { code: "ENOENT" });
+  assert.equal(checked.limitations.length, 0);
+}));
+
+test("reuse of a declared internal write target is persistent state even with an ordinary filename", async () => residueFixture(async ({ source, cwd, home }) => {
+  await artifact(path.join(source, "record.json"));
+  const checked = (await auditSkill({ source, reads: ["record.json"], writes: ["./record.json"] }, { cwd, home })).cross_session_residue;
+  assert.equal(checked.findings.length, 2);
+  assert.ok(checked.findings.some((finding) => finding.reason === "persisted_state_read"));
+  assert.equal(checked.findings[0].outsideSkill, false);
+}));
+
+test("declared directory outputs identify state read from files under that directory", async () => residueFixture(async ({ source, cwd, home }) => {
+  await artifact(path.join(source, "data/record.txt"));
+  const checked = (await auditSkill({ source, reads: ["data/record.txt"], writes: ["./data/"] }, { cwd, home })).cross_session_residue;
+  assert.ok(checked.findings.some((finding) => finding.reason === "persisted_state_read" && finding.path === path.join(source, "data/record.txt")));
+}));
+
+test("outside write detection resolves symlink ancestors and respects directory boundaries", async () => residueFixture(async ({ source, cwd, home, root }) => {
+  await symlink(cwd, path.join(source, "linked"), "dir");
+  const checked = (await auditSkill({ source, writes: ["./linked/new/result.json", "../skill-other/output.json"] }, { cwd, home })).cross_session_residue;
+  const external = checked.findings.filter((finding) => finding.reason === "outside_skill_write");
+  assert.deepEqual(external.map((finding) => finding.path), [path.join(cwd, "new/result.json"), path.join(root, "skill-other/output.json")]);
+  assert.ok(checked.limitations.some((item) => item.reason === "uninspected_special_file"));
+  assert.equal((await auditSkill({ source, reads: ["$UNKNOWN/state.json", "outputs/*.json", "source-code"] }, { cwd, home })).cross_session_residue.limitations.filter((item) => item.reason === "unresolved_declared_target").length, 3);
+}));
+
+test("a clean artifact tree passes scoped residue inspection and unavailable evidence stays unknown", async () => residueFixture(async ({ source, cwd, home }) => {
+  await artifact(path.join(source, "assets/input.json"));
+  assert.equal((await auditSkill({ source, reads: ["assets/input.json"] }, { cwd, home })).cross_session_residue.status, "pass");
+  assert.equal((await auditSkill({ source, writes: ["$UNKNOWN/data.json"] }, { cwd, home })).cross_session_residue.status, "unknown");
+  assert.equal((await auditSkill({ source, metadataError: "invalid" }, { cwd, home })).cross_session_residue.status, "unknown");
+  const synthetic = await auditSkill({ source: "openclaw:runtime" });
+  assert.ok(REQUIRED_CHECKS.every(({ id }) => synthetic[id].status === "unknown"));
+  const old = analyzeInventory({ components: [{ id: "old", kind: "skill", name: "old", description: "cached" }] });
+  assert.ok(old.requiredChecks.every((check) => check.unknownSkills === 1));
+}));
+
+test("scanner runs both mandatory checks, scopes shared targets and does not discover residue as Skills", async () => residueFixture(async ({ source, cwd, home }) => {
+  await artifact(path.join(source, "tmp/SKILL.md"), "---\nname: leftover\n---\n");
+  await artifact(path.join(cwd, "outputs/result.json"));
+  await writeFile(path.join(source, "SKILL.md"), "---\nname: audit-fixture\ndescription: fixture\nreads: ['$WORKSPACE/outputs/result.json']\nwrites: ['$WORKSPACE/outputs/result.json']\n---\n");
+  const inventory = await scanRoots({ roots: [source], runtime: "hermes", cwd, home });
+  assert.deepEqual(inventory.components.map((component) => component.name), ["audit-fixture"]);
+  const analysis = analyzeInventory(inventory);
+  assert.equal(analysis.requiredChecks.length, 2);
+  assert.equal(analysis.requiredChecks.find((check) => check.id === "python_bytecode").status, "pass");
+  assert.equal(analysis.requiredChecks.find((check) => check.id === "cross_session_residue").status, "findings");
+  assert.equal(analysis.actionableFindings.filter((finding) => finding.type === "cross_session_residue").length, 3);
+  assert.match(formatAnalysis(analysis), /Required check: cross_session_residue=findings/);
+}));
+
+test("CLI analysis reports mandatory evidence without saving state or executing Skill code", async () => residueFixture(async ({ source, cwd, home, root }) => {
+  await artifact(path.join(source, "outputs/prior.txt"));
+  const state = path.join(root, "state-must-not-exist");
+  const cli = new URL("../src/cli.js", import.meta.url).pathname;
+  const args = [cli, "analyze", "--runtime", "hermes", "--root", source, "--state", state];
+  const { stdout } = await exec(process.execPath, [...args, "--json"], { cwd, env: { ...process.env, HOME: home } });
+  const analysis = JSON.parse(stdout);
+  assert.ok(analysis.requiredChecks.every((check) => check.required));
+  assert.equal(analysis.findingCountsByType.cross_session_residue, 1);
+  const human = await exec(process.execPath, args, { cwd });
+  assert.match(human.stdout, /Required check: cross_session_residue=findings/);
+  await assert.rejects(access(state), { code: "ENOENT" });
+}));

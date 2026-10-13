@@ -406,8 +406,8 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
         : component.source;
       let auditChecks;
       if (component.kind === "skill") {
-        const key = canonicalSource;
-        if (!scanCache.audits.has(key)) scanCache.audits.set(key, auditSkill({ ...component, source: canonicalSource }));
+        const key = JSON.stringify([canonicalSource, cwd, home, component.reads, component.writes, component.metadataError]);
+        if (!scanCache.audits.has(key)) scanCache.audits.set(key, auditSkill({ ...component, source: canonicalSource }, { cwd, home }));
         auditChecks = await scanCache.audits.get(key);
       }
       return { ...component, canonicalSource, ...(auditChecks ? { auditChecks } : {}), analysisScope: authoritative ? "session-visible" : "runtime-roots" };
