@@ -52,7 +52,7 @@ export function sameSource(left, right) {
 export function analyzeInventory(inventory) {
   const components = analysisComponents(inventory).filter((component) => component.kind === "skill");
   const findings = [];
-  const requiredChecks = REQUIRED_CHECKS.map((check) => ({ ...check, status: "unknown", passedSkills: 0, findingSkills: 0, unknownSkills: 0 }));
+  const requiredChecks = REQUIRED_CHECKS.map((check) => ({ ...check, status: "unknown", passedSkills: 0, findingSkills: 0, unknownSkills: 0, results: [] }));
   const coverage = { totalSkills: components.length, missingDescription: 0, missingTriggers: 0, missingTools: 0, metadataErrors: 0 };
   const lifecycle = { discovered: 0, installed: 0, enabled: 0, sessionVisible: 0, actualUsed: 0, unknownInstallation: 0, unknownEnabled: 0, unknownSessionVisibility: 0, unknownActualUsed: 0 };
   const riskInventory = {};
@@ -61,6 +61,8 @@ export function analyzeInventory(inventory) {
   for (const component of components) {
     for (const check of requiredChecks) {
       const evidence = component.auditChecks?.[check.id];
+      check.results.push({ componentId: component.id, status: evidence?.status ?? "unknown", inspected: evidence?.inspected ?? 0, findingCount: evidence?.findings?.length ?? 0,
+        limitations: evidence?.limitations ?? [{ reason: "check_evidence_unavailable", path: component.source ?? null, message: "This inventory has no evidence for the required check; rescan live sources." }] });
       if (evidence?.status === "pass") check.passedSkills += 1;
       if (evidence?.status === "findings") check.findingSkills += 1;
       if (!evidence || evidence.status === "unknown" || evidence.limitations?.length) check.unknownSkills += 1;
