@@ -101,7 +101,7 @@ async function bytecodeCheck(root, files, traversalLimitations, hashSource) {
       if (!headerSize) { limitations.push(issue("unsupported_magic", file, "Unrecognized Python bytecode format.")); continue; }
       if (bytesRead < headerSize || (await handle.stat()).size <= headerSize) { fail("invalid_header", "Python bytecode is truncated or has no body."); continue; }
       const flags = headerSize === 16 ? header.readUInt32LE(4) : 0;
-      if (flags !== 0 && flags !== 1 && flags !== 3) { fail("invalid_flags", "Python bytecode contains invalid PEP 552 flags."); continue; }
+      if (flags & ~3) { fail("invalid_flags", "Python bytecode contains invalid PEP 552 flags."); continue; }
       if (flags & 1) {
         if (sourceStat.size > MAX_SOURCE_BYTES) { limitations.push(issue("source_size_limit", source, "Source exceeds the hash verification size limit.")); continue; }
         const verified = await hashSource(header.subarray(0, 4), await readFile(source));

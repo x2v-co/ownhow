@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { auditSkill, REQUIRED_CHECKS } from "../src/audit-checks.js";
@@ -72,6 +72,10 @@ test("detects stale mtime, stale size, orphan caches and source-less legacy byte
 
 test("malformed bytecode fails and unsupported formats remain unknown", async () => fixture(async (root) => {
   await timestampCache(root, "module.pyc", { flags: 2 });
+  assert.equal((await bytecode(root)).status, "pass");
+  await timestampCache(root, "module.pyc", { flags: 2, mtime: 1700000001 });
+  assert.equal((await bytecode(root)).findings[0].reason, "timestamp_size_mismatch");
+  await timestampCache(root, "module.pyc", { flags: 4 });
   assert.equal((await bytecode(root)).findings[0].reason, "invalid_flags");
   await timestampCache(root, "module.pyc", { body: false });
   assert.equal((await bytecode(root)).findings[0].reason, "invalid_header");
@@ -109,6 +113,38 @@ test("real python3 -m py_compile cache is found and detects a subsequent source 
     assert.equal((await bytecode(root)).findings[0].reason, "timestamp_size_mismatch");
   });
 });
+
+test("foreign hash versions stay unknown and the hash helper ignores Skill imports", async (t) => {
+  if (!await requirePython(t)) return;
+  await fixture(async (root) => {
+    await artifact(path.join(root, "json.py"), "open('executed', 'w').write('bad')\n");
+    await exec("python3", ["-I", "-S", "-c", "import py_compile; py_compile.compile('module.py', cfile='module.pyc', invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)"], { cwd: root });
+    const moduleUrl = new URL("../src/audit-checks.js", import.meta.url).href;
+    const script = `import { auditSkill } from ${JSON.stringify(moduleUrl)}; console.log(JSON.stringify(await auditSkill({source: process.argv[1]})));`;
+    const isolated = await exec(process.execPath, ["--input-type=module", "-e", script, root], { cwd: root, env: { ...process.env, PYTHONPATH: root } });
+    assert.equal(JSON.parse(isolated.stdout).python_bytecode.status, "pass");
+    await assert.rejects(access(path.join(root, "executed")), { code: "ENOENT" });
+    const unavailable = await exec(process.execPath, ["--input-type=module", "-e", script, root], { env: { ...process.env, PATH: "" } });
+    assert.equal(JSON.parse(unavailable.stdout).python_bytecode.limitations[0].reason, "hash_verifier_unavailable");
+    const cache = await readFile(path.join(root, "module.pyc"));
+    cache.writeUInt16LE(cache.readUInt16LE(0) + 1, 0);
+    await writeFile(path.join(root, "module.pyc"), cache);
+    const foreign = await bytecode(root);
+    assert.equal(foreign.status, "unknown");
+    assert.equal(foreign.limitations[0].reason, "unsupported_hash_version");
+  });
+});
+
+test("artifact traversal and source-size limits keep mandatory evidence incomplete", async () => fixture(async (root) => {
+  await timestampCache(root, "module.pyc", { flags: 1 });
+  await truncate(path.join(root, "module.py"), 8 * 1024 * 1024 + 1);
+  const large = await bytecode(root, { hashSource: async () => { throw new Error("Oversized source must not reach hashing"); } });
+  assert.equal(large.status, "unknown");
+  assert.equal(large.limitations[0].reason, "source_size_limit");
+  await artifact(path.join(root, ...Array.from({ length: 34 }, () => "nested"), "hidden.pyc"));
+  const checked = await auditSkill({ source: root });
+  assert.ok(REQUIRED_CHECKS.every(({ id }) => checked[id].limitations.some((item) => item.reason === "scan_limit")));
+}));
 
 test("unavailable hash verification, missing roots and symlinks cannot produce a pass", async () => fixture(async (root) => {
   await timestampCache(root, "module.pyc", { flags: 1 });
