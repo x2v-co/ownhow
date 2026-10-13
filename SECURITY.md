@@ -55,6 +55,10 @@ not block the main OwnHow command.
 
 OwnHow treats scanned Plugin and Skill content as untrusted data. Reports derived from static text are signals, not proof that a component performed an action. The CLI does not install, disable, delete, or modify scanned components.
 
+Live scans run the mandatory `python_bytecode` and `cross_session_residue` checks. Artifact inspection includes cache, temporary and output files inside each discovered Skill. External declared read/write targets are inspected for existence and canonical location without reading their contents or recursively searching the user's home/workspace. Source-hash verification runs a fixed helper with `python3 -I -S`; it treats source bytes as data and never imports, unmarshals or executes scanned source/bytecode. As with runtime adapter commands, the local executable found through `PATH` must be trusted.
+
+Bytecode header checks cannot detect a substituted body whose metadata was forged to match source. Residue findings identify persistence surfaces, with session ownership left unknown. Undeclared/dynamic effects need script review and session provenance evidence. Traversal limits, symlinks, missing sources from runtime reports and unavailable hash verification remain explicit limitations, never a clean audit. See [audit check definitions](docs/audit-checks.md) and the motivating research on [bytecode substitutions](https://arxiv.org/abs/2610.10612) and [cross-session artifacts](https://arxiv.org/abs/2610.13227).
+
 Telemetry endpoints are outside OwnHow's local trust boundary. OwnHow accepts
 only HTTPS endpoints without embedded credentials or URL fragments and sends
 the bounded aggregate event schema. It does not treat a server response as an

@@ -3,6 +3,7 @@ name: ownhow-governance
 version: 0.8.0
 description: Govern the user's local AI Plugins, Skills, and Personal Methods with the OwnHow CLI across Codex, Hermes, Claude Code, Pi, OpenCode, OpenClaw, and Skywork. Use when the user asks what methods are installed, wants conflicts analyzed, asks which Skill or Plugin should handle a task, wants to record or remotely recover a real outcome, or wants to propose or apply an improvement to a user-owned Personal Method. 也用于检查本地 AI 方法、分析 Skill 或 Plugin 冲突、为当前任务选择方法、记录或远程回收真实结果，以及生成或应用个人方法改进。
 aliases: [ownhow]
+required_checks: [python_bytecode, cross_session_residue]
 triggers:
   - 检查我的本地 Skills 并分析能力重叠
   - 检查本地 AI 方法和插件冲突
@@ -30,6 +31,15 @@ The normal Agent-facing result is only four decisions: which method to use, whet
 ## Inventory scope
 
 Do not equate a recursively discovered workspace file with an active method. Treat `discovered`, `installed`, `enabled`, `sessionVisible`, and `actualUsed` as separate facts; one does not imply the next. Prefer `analysisScope: session-visible` and report those lifecycle states separately. `actualUsed` is execution evidence and stays unknown unless the host or Agent reports it. When OwnHow falls back to runtime roots because the runtime has no authoritative active report, label installation/session visibility as unknown and treat the result as candidates only. Temporary review/smoke folders, worktrees, build output, and common caches are excluded by default.
+
+## Mandatory audit checks
+
+Include both items in every Skill audit. Run a live `ownhow analyze --runtime <current-runtime> --json` and review `requiredChecks`, its per-Skill `results` and limitations, and file findings. Inventories also retain full per-Skill `auditChecks`. A cached result does not establish the current filesystem state. Discovery exclusions do not exclude artifacts inside a discovered Skill from these checks.
+
+- **Stale/mismatched Python bytecode (`python_bytecode`)**: inspect all `.pyc` files, including `__pycache__`, for missing source, embedded mtime/size mismatches and PEP 552 hash mismatches, including unchecked hashes. Bytecode can differ from reviewed source; see [PyCache Trap, arXiv:2610.10612](https://arxiv.org/abs/2610.10612). Matching headers do not prove body equivalence; inspect provenance or reproduce compiled artifacts in a trusted environment when that assurance is needed.
+- **Cross-session file residue (`cross_session_residue`)**: inspect temp files, caches, outputs and persisted state, including shared workspace/home targets, writes outside the declared Skill directory and state later sessions read. Such residue can leak data or poison later sessions; see [persistent-artifact attacks, arXiv:2610.13227](https://arxiv.org/abs/2610.13227). Check ownership, session provenance, isolation and cleanup boundaries. The CLI inspects Skill files and declared `reads`/`writes`; review scripts and available session file manifests for undeclared or dynamic paths. A candidate file alone does not prove a prior session created it.
+
+Keep unavailable evidence `unknown`, including missing local paths, unsupported Python/hash versions, unreadable or skipped files and unresolved declared targets. `pass` means no indicators in the inspected scope. Never execute scanned code or delete residue as part of the audit, and do not infer a new approval requirement from a finding alone.
 
 ## Commands
 
