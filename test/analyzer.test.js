@@ -50,3 +50,16 @@ test("discovered-only overlap remains informational until co-visibility is prove
   assert.equal(overlap?.severity, "info");
   assert.equal(analysis.actionableFindings.length, 0);
 });
+
+test("required check results retain per-Skill limitations in read-only analysis", () => {
+  const analysis = analyzeInventory({ components: [skill("unverified", "synthetic", {
+    auditChecks: { python_bytecode: { status: "unknown", inspected: 1, findings: [], limitations: [{ reason: "unsupported_hash_version", path: "/fixture/module.pyc" }] } }
+  })] });
+  const bytecode = analysis.requiredChecks.find((check) => check.id === "python_bytecode");
+  assert.equal(bytecode.unknownSkills, 1);
+  assert.equal(bytecode.results[0].componentId, "unverified");
+  assert.equal(bytecode.results[0].limitations[0].reason, "unsupported_hash_version");
+  const residue = analysis.requiredChecks.find((check) => check.id === "cross_session_residue");
+  assert.equal(residue.results[0].limitations[0].reason, "check_evidence_unavailable");
+  assert.equal(analysis.findings.length, 0);
+});

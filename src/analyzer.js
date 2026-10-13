@@ -1,4 +1,5 @@
 import { matchingTokens, overlapScore, tokenize } from "./text.js";
+import { REQUIRED_CHECKS } from "./audit-checks.js";
 
 // These words occur in most Skill descriptions and do not provide useful
 // evidence that two Skills should be compared. `text.js` already removes
@@ -51,12 +52,22 @@ export function sameSource(left, right) {
 export function analyzeInventory(inventory) {
   const components = analysisComponents(inventory).filter((component) => component.kind === "skill");
   const findings = [];
+  const requiredChecks = REQUIRED_CHECKS.map((check) => ({ ...check, status: "unknown", passedSkills: 0, findingSkills: 0, unknownSkills: 0, results: [] }));
   const coverage = { totalSkills: components.length, missingDescription: 0, missingTriggers: 0, missingTools: 0, metadataErrors: 0 };
   const lifecycle = { discovered: 0, installed: 0, enabled: 0, sessionVisible: 0, actualUsed: 0, unknownInstallation: 0, unknownEnabled: 0, unknownSessionVisibility: 0, unknownActualUsed: 0 };
   const riskInventory = {};
   const hintInventory = {};
   const tokens = components.map((component) => tokenize(`${component.name} ${component.description} ${(component.triggers ?? []).join(" ")}`));
   for (const component of components) {
+    for (const check of requiredChecks) {
+      const evidence = component.auditChecks?.[check.id];
+      check.results.push({ componentId: component.id, status: evidence?.status ?? "unknown", inspected: evidence?.inspected ?? 0, findingCount: evidence?.findings?.length ?? 0,
+        limitations: evidence?.limitations ?? [{ reason: "check_evidence_unavailable", path: component.source ?? null, message: "This inventory has no evidence for the required check; rescan live sources." }] });
+      if (evidence?.status === "pass") check.passedSkills += 1;
+      if (evidence?.status === "findings") check.findingSkills += 1;
+      if (!evidence || evidence.status === "unknown" || evidence.limitations?.length) check.unknownSkills += 1;
+      for (const finding of evidence?.findings ?? []) findings.push({ ...finding, type: check.id, checkId: check.id, components: [component.id], componentId: component.id, reference: check.reference });
+    }
     const state = component.lifecycle ?? {};
     for (const key of ["discovered", "installed", "enabled", "sessionVisible", "actualUsed"]) lifecycle[key] += state[key] === true ? 1 : 0;
     for (const [key, field] of [["unknownInstallation", "installed"], ["unknownEnabled", "enabled"], ["unknownSessionVisibility", "sessionVisible"], ["unknownActualUsed", "actualUsed"]]) lifecycle[key] += state[field] == null ? 1 : 0;
@@ -69,6 +80,7 @@ export function analyzeInventory(inventory) {
     for (const risk of riskSignals(component)) riskInventory[risk] = (riskInventory[risk] ?? 0) + 1;
     for (const hint of riskHints(component)) hintInventory[hint] = (hintInventory[hint] ?? 0) + 1;
   }
+  for (const check of requiredChecks) check.status = check.findingSkills ? "findings" : check.unknownSkills || !components.length ? "unknown" : "pass";
   // Build exact and semantic indexes separately. Exact comparisons are part of
   // the analyzer contract and must remain complete even when a token is too
   // common to be useful for semantic candidate generation.
@@ -160,6 +172,7 @@ export function analyzeInventory(inventory) {
     coverage: { ...coverage, lifecycle },
     riskInventory,
     hintInventory,
+    requiredChecks,
     comparisons: pairs.size,
     findings,
     actionableFindings,

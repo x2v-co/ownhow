@@ -7,6 +7,7 @@ Governance commands do not upload source files, call a model, or modify installe
 ## Requirements
 
 - Node.js 22 or newer
+- Local `python3` with a matching bytecode version for PEP 552 source-hash verification. Other checks work without Python; unavailable hash verification is reported as `unknown`.
 
 ## Install
 
@@ -161,6 +162,17 @@ The manifest must match one selected runtime. OwnHow trusts this host report; it
 
 Cross-runtime copies are informational. Same-session name and declared write collisions are reported separately from semantic overlap, which is a routing hint rather than proof of a behavioral conflict. Text-only risk hints do not become approval requirements. Resolve exposes per-field scores and exclusion reasons, and only adds an augment when that Skill explicitly declares `augments: [primary-skill-name]` in the same runtime.
 
+## Mandatory artifact checks
+
+Every live scan inspects the files of discovered Skills, including caches, temporary directories and build outputs that are excluded from Skill discovery. `analyze` reports these two required checks:
+
+| Check ID | Mandatory check item |
+|---|---|
+| `python_bytecode` | Stale/mismatched Python bytecode: orphan `.pyc` files, including `__pycache__`, and embedded source mtime/size or PEP 552 hash mismatches. Bytecode may carry behavior that differs from reviewed source. See [PyCache Trap](https://arxiv.org/abs/2610.10612). |
+| `cross_session_residue` | Cross-session file residue: temp files, caches, outputs and state in the Skill, declared writes outside it, and existing shared/workspace/home or writable state declared as input. These artifacts can leak data or poison later sessions. See [persistent-artifact attacks](https://arxiv.org/abs/2610.13227). |
+
+Use `ownhow analyze --runtime <runtime> --json` for `requiredChecks` coverage, per-Skill `results` with limitations, and findings with file paths and reasons. Full per-Skill evidence lives in inventory `auditChecks`. Old snapshots and unavailable evidence remain `unknown`; use a live scan for an audit. Matching bytecode headers do not establish body equivalence, and residue candidates do not establish session ownership. The checks never execute scanned code or remove files. See [audit check definitions and limits](docs/audit-checks.md).
+
 ## Personal Method loop
 
 Record a real outcome and the correction you had to repeat:
@@ -255,7 +267,7 @@ See [Receipt Bundle Protocol v2](docs/receipt-bundle-v2.md) for the evidence-ric
 | Command | Purpose |
 |---|---|
 | `scan` | Save an inventory with discovery and visibility states; leave source methods unchanged |
-| `analyze` | Detect duplicate names, semantic overlap, write collisions, missing metadata, and risk surfaces |
+| `analyze` | Detect duplicate names, semantic overlap, write collisions, missing metadata, risk surfaces, bytecode mismatches, and session residue |
 | `resolve <task>` | Produce a deterministic task plan with selection reasons and approval risks |
 | `record <task>` | Save a local receipt with outcome, verification evidence, and optional correction |
 | `export` | Export an evidence-rich Receipt Bundle capsule for Agent-mediated recovery |

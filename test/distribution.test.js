@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "../src/scanner.js";
+import { REQUIRED_CHECKS } from "../src/audit-checks.js";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const readJson = async (file) => JSON.parse(await readFile(path.join(root, file), "utf8"));
@@ -37,6 +38,8 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   assert.equal(hermesSkill.version, packageMetadata.version);
   assert.match(skill.description, /OwnHow CLI/);
   assert.equal(hermesSkill.name, "ownhow-governance");
+  assert.deepEqual(skill.required_checks, REQUIRED_CHECKS.map((check) => check.id));
+  assert.deepEqual(hermesSkill.required_checks, skill.required_checks);
   assert.match(hermesSkill.description, /Hermes/);
   assert.deepEqual(packageMetadata.pi.skills, ["./skills/ownhow-governance"]);
   assert.match(hermesSkill.description, /Pi/);

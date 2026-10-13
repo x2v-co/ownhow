@@ -8,6 +8,7 @@ import { claudeRuntime } from "./runtimes/claude.js";
 import { piRuntime } from "./runtimes/pi.js";
 import { opencodeRuntime } from "./runtimes/opencode.js";
 import { openclawRuntime } from "./runtimes/openclaw.js";
+import { auditSkill } from "./audit-checks.js";
 
 const FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
 const TEMPORARY_OR_BUILD_DIRECTORIES = new Set([".review", ".smoke", ".worktree", ".worktrees", "worktree", "worktrees", "build", "dist", "out", "target", "coverage", ".next", ".turbo", ".tmp", "tmp"]);
@@ -72,7 +73,7 @@ async function walk(directory, predicate, results = [], options = {}, visited = 
 // and file reads shared for the lifetime of that scan. The cache is deliberately
 // internal so the public scanner API remains unchanged.
 function createScanCache() {
-  return { canonical: new Map(), walks: new Map(), files: new Map() };
+  return { canonical: new Map(), walks: new Map(), files: new Map(), audits: new Map() };
 }
 
 async function canonicalPath(file, cache) {
@@ -399,13 +400,18 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
     runtime,
     authoritative: authoritative,
     analysisScope: authoritative ? "session-visible" : "runtime-roots",
-    components: await Promise.all(components.sort((a, b) => a.id.localeCompare(b.id)).map(async (component) => ({
-      ...component,
-      canonicalSource: typeof component.source === "string"
+    components: await Promise.all(components.sort((a, b) => a.id.localeCompare(b.id)).map(async (component) => {
+      const canonicalSource = typeof component.source === "string"
         ? path.isAbsolute(component.source) ? await canonicalPath(component.source, scanCache) : await realpath(component.source).catch(() => component.source)
-        : component.source,
-      analysisScope: authoritative ? "session-visible" : "runtime-roots"
-    })))
+        : component.source;
+      let auditChecks;
+      if (component.kind === "skill") {
+        const key = JSON.stringify([canonicalSource, cwd, home, component.reads, component.writes, component.metadataError]);
+        if (!scanCache.audits.has(key)) scanCache.audits.set(key, auditSkill({ ...component, source: canonicalSource }, { cwd, home }));
+        auditChecks = await scanCache.audits.get(key);
+      }
+      return { ...component, canonicalSource, ...(auditChecks ? { auditChecks } : {}), analysisScope: authoritative ? "session-visible" : "runtime-roots" };
+    }))
   };
 }
 
