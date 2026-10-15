@@ -170,8 +170,12 @@ Every live scan inspects the files of discovered Skills, including caches, tempo
 |---|---|
 | `python_bytecode` | Stale/mismatched Python bytecode: orphan `.pyc` files, including `__pycache__`, and embedded source mtime/size or PEP 552 hash mismatches. Bytecode may carry behavior that differs from reviewed source. See [PyCache Trap](https://arxiv.org/abs/2610.10612). |
 | `cross_session_residue` | Cross-session file residue: temp files, caches, outputs and state in the Skill, declared writes outside it, and existing shared/workspace/home or writable state declared as input. These artifacts can leak data or poison later sessions. See [persistent-artifact attacks](https://arxiv.org/abs/2610.13227). |
+| `self_log_tampering` | Writes or commands that modify logs, audit trails, receipts, transcripts or history can hide actions from oversight. |
+| `external_network_access` | Network commands/APIs, declared network tools/effects and remote MCP URLs can enable exfiltration or unauthorized access. |
+| `cross_agent_communication` | Agent tools/CLIs, A2A and writes into other agents' directories can enable collusion. These three permission checks reference [CASP](https://casp.ac/reports/intelligence-explosion). |
 
-Use `ownhow analyze --runtime <runtime> --json` for `requiredChecks` coverage, per-Skill `results` with limitations, and findings with file paths and reasons. Full per-Skill evidence lives in inventory `auditChecks`. Old snapshots and unavailable evidence remain `unknown`; use a live scan for an audit. Matching bytecode headers do not establish body equivalence, and residue candidates do not establish session ownership. The checks never execute scanned code or remove files. See [audit check definitions and limits](docs/audit-checks.md).
+
+Use `ownhow analyze --runtime <runtime> --json` for `requiredChecks` coverage, per-Skill `results` with limitations, and findings with file paths and reasons. Full per-Skill evidence lives in inventory `auditChecks`. Old snapshots and unavailable evidence remain `unknown`; use a live scan for an audit. Matching bytecode headers do not establish body equivalence, and residue candidates do not establish session ownership. The checks never execute scanned code or remove files. Permission risks default to `warn`, without changing approvals or exit codes. Use `analyze --permission-checks=off|warn|block`, per-check `--permission-check ID=MODE`, or `OWNHOW_PERMISSION_CHECKS`; only findings in `block` mode make `analyze` exit 1. Exact Skill IDs can be allowlisted with `--permission-allow-skill ID`. See [audit check definitions and limits](docs/audit-checks.md).
 
 ## Personal Method loop
 

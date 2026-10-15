@@ -1,0 +1,5 @@
+{
+  "mcp": {
+    "remote": {"type":"remote", "url":"https://example.test/mcp"}
+  }
+}
