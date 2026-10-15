@@ -2,6 +2,7 @@
 import process from "node:process";
 import path from "node:path";
 import { analyzeInventory } from "./analyzer.js";
+import { permissionPolicy } from "./permission-checks.js";
 import { rollbackMethod, applyProposal, createProposal, createReceipt, saveProposal } from "./evolution.js";
 import { formatAnalysis, formatInventory, formatPlan } from "./format.js";
 import { acceptInboxEntry, createReceiptCapsule, importReceiptCapsule, rejectInboxEntry } from "./receipt-bundle.js";
@@ -15,11 +16,18 @@ import { configureTelemetry, disableTelemetry, exportTelemetry, purgeTelemetry, 
 function parseArgs(argv) {
   const positional = [];
   const options = {};
-  const listKeys = new Set(["evidence", "artifact", "blocker"]);
+  const listKeys = new Set(["evidence", "artifact", "blocker", "permission-check", "permission-allow-skill"]);
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (!value.startsWith("--")) { positional.push(value); continue; }
-    const key = value.slice(2);
+    const equals = value.indexOf("=");
+    const key = value.slice(2, equals < 0 ? undefined : equals);
+    if (equals >= 0) {
+      const inline = value.slice(equals + 1);
+      if (listKeys.has(key)) options[key] = [...(options[key] ?? []), inline];
+      else options[key] = inline;
+      continue;
+    }
     if (["json", "help", "cached", "fast", "reexport-imported", "apply", "check", "auto", "enable-auto", "disable-auto", "snooze", "recover"].includes(key)) { options[key] = true; continue; }
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) throw new Error(`Missing value for --${key}`);
@@ -64,6 +72,11 @@ Usage:
 Resolve: --save-plan PATH writes a reviewable execution plan (opt-in).
 Record: --plan PATH binds the actual plan; --method-use loaded|followed|unknown
         --sample-kind business|demo|workflow-test|unknown labels evidence.
+Permission risks (analyze): --permission-checks off|warn|block (default: warn)
+  --permission-check ID=MODE overrides one check (repeatable).
+  --permission-allow-skill ID skips permission findings for an exact Skill ID (repeatable).
+  OWNHOW_PERMISSION_CHECKS accepts a mode or comma-separated ID=MODE assignments.
+  Findings in block mode make analyze exit 1. These options do not change approvals.
 Scans: --session-manifest PATH reads a host supplied manifest (legacy {runtime, skillFiles} or schema v1 {runtime, skills}).
 
 Analyze and resolve use the live installation by default and do not write state.
@@ -190,8 +203,10 @@ async function main() {
   }
   if (command === "analyze") {
     const startedAt = Date.now();
+    const permissionOptions = { mode: options["permission-checks"] ?? process.env.OWNHOW_PERMISSION_CHECKS ?? "warn", overrides: options["permission-check"] ?? [], allowSkills: options["permission-allow-skill"] ?? [] };
+    permissionPolicy(permissionOptions);
     const inventory = await inventoryFor(options, stateDir);
-    const analysis = { ...analyzeInventory(inventory), inventoryMode: options.cached ? "cached" : options.fast ? "fast" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
+    const analysis = { ...analyzeInventory(inventory, permissionOptions), inventoryMode: options.cached ? "cached" : options.fast ? "fast" : "live", inventoryGeneratedAt: inventory.generatedAt, inventoryAnalysisScope: inventory.analysisScope ?? "unknown" };
     await recordTelemetrySafely(stateDir, {
       type: "analyze", runtime: inventory.runtime ?? runtimeFor(options), scope: inventory.analysisScope,
       cache: analysis.inventoryMode, latencyMs: Date.now() - startedAt,
@@ -199,6 +214,7 @@ async function main() {
       actionableFindingCount: analysis.actionableFindings?.length
     });
     output(analysis, options.json, formatAnalysis);
+    if (analysis.permissionBlocked) process.exitCode = 1;
     return;
   }
   if (command === "resolve" || command === "record") {

@@ -265,7 +265,7 @@ test("scanner runs both mandatory checks, scopes shared targets and does not dis
   const inventory = await scanRoots({ roots: [source], runtime: "hermes", cwd, home });
   assert.deepEqual(inventory.components.map((component) => component.name), ["audit-fixture"]);
   const analysis = analyzeInventory(inventory);
-  assert.equal(analysis.requiredChecks.length, 2);
+  assert.equal(analysis.requiredChecks.length, REQUIRED_CHECKS.length);
   assert.equal(analysis.requiredChecks.find((check) => check.id === "python_bytecode").status, "pass");
   assert.equal(analysis.requiredChecks.find((check) => check.id === "cross_session_residue").status, "findings");
   assert.equal(analysis.actionableFindings.filter((finding) => finding.type === "cross_session_residue").length, 3);
@@ -284,4 +284,166 @@ test("CLI analysis reports mandatory evidence without saving state or executing 
   const human = await exec(process.execPath, args, { cwd });
   assert.match(human.stdout, /Required check: cross_session_residue=findings/);
   await assert.rejects(access(state), { code: "ENOENT" });
+}));
+
+const permissionRoot = new URL("./fixtures/permission-risk/", import.meta.url).pathname;
+const permissionIds = ["self_log_tampering", "external_network_access", "cross_agent_communication"];
+
+test("required permission checks inspect runtime scripts, declarations and enclosing plugin manifests", async () => {
+  const layouts = [
+    ["claude-plugin/skills/review", "claude"], ["hermes/skills/network", "hermes"],
+    ["pi-package/skills/network", "pi"], ["opencode/.opencode/skills/review", "opencode"], ["openclaw/skills/review", "openclaw"]
+  ];
+  for (const [relative, runtime] of layouts) {
+    const source = path.join(permissionRoot, relative);
+    const inventory = await scanRoots({ roots: [source], runtime, cwd: source, home: permissionRoot });
+    const skill = inventory.components.find((item) => item.kind === "skill");
+    for (const id of permissionIds) {
+      const check = skill.auditChecks[id];
+      if (relative.startsWith("opencode") && id === "self_log_tampering") continue;
+      assert.equal(check.status, "findings", `${relative}: ${id}`);
+      for (const finding of check.findings) {
+        assert.ok(["high", "medium", "low"].includes(finding.risk));
+        assert.equal(finding.severity, finding.risk === "low" ? "info" : finding.risk);
+        assert.ok(path.isAbsolute(finding.path));
+        assert.ok(finding.line > 0);
+        assert.ok(finding.evidence.length > 0 && finding.evidence.length <= 200);
+        assert.ok(finding.reason && finding.message);
+        const line = (await readFile(finding.path, "utf8")).split(/\r?\n/)[finding.line - 1];
+        assert.equal(finding.evidence, line.trim().slice(0, 200));
+      }
+    }
+    const network = skill.auditChecks.external_network_access;
+    if (["claude", "opencode", "openclaw"].includes(runtime)) assert.ok(network.findings.some((item) => item.reason === "remote_server_url" && !item.path.startsWith(`${source}/`)));
+    const analysis = analyzeInventory(inventory);
+    assert.equal(analysis.permissionBlocked, false);
+    assert.ok(analysis.requiredChecks.filter((item) => permissionIds.includes(item.id)).every((item) => item.mode === "warn"));
+    assert.match(formatAnalysis(analysis), /Required check: external_network_access=findings/);
+  }
+});
+
+test("Claude plugin-root discovery includes its remote MCP manifest", async () => {
+  const source = path.join(permissionRoot, "claude-plugin");
+  const inventory = await scanRoots({ roots: [source], runtime: "claude", cwd: source, home: permissionRoot });
+  const skill = inventory.components.find((item) => item.kind === "skill");
+  assert.equal(skill.pluginRoot, source);
+  assert.ok(skill.auditChecks.external_network_access.findings.some((item) => item.path === path.join(source, ".mcp.json") && item.line === 3));
+});
+
+test("clean local operations have no permission findings; prose and fenced examples have lower risk", async () => {
+  const clean = await auditSkill({ source: path.join(permissionRoot, "clean") });
+  for (const id of permissionIds) assert.equal(clean[id].status, "pass");
+  const prose = await auditSkill({ source: path.join(permissionRoot, "prose") });
+  for (const id of permissionIds) assert.ok(prose[id].findings.some((item) => item.risk === "low" && item.severity === "info"));
+  assert.ok(prose.external_network_access.findings.some((item) => item.risk === "medium"));
+});
+
+test("permission detection covers network APIs, agent tools and log mutation across script languages", async () => fixture(async (root) => {
+  const groups = {
+    self_log_tampering: ["fs.unlink('file.log')", "fs.writeFile('audit.txt', '')", "File.write('history.jsonl', '')", "os.remove('receipts.json')", "open('history.jsonl', 'w')", "rm ownhow/receipts.jsonl", "truncate -s0 trace.log", "sed -i 's/a/b/' audit.txt", ": > transcript.txt", "history -c", "git commit --amend", "git reflog expire --all"],
+    external_network_access: ["curl https://example.test", "wget https://example.test", "nc example.test 80", "ssh user@example.test", "scp a user@example.test:/a", "fetch('https://example.test')", "axios.get(url)", "requests.get(url)", "urllib.request.urlopen(url)", "httpx.get(url)", "aiohttp.ClientSession()", "http.client.HTTPSConnection(host)", 'import "net/http"'],
+    cross_agent_communication: ["SendToAgent('other')", "send_message('other')", "spawn sub-agents", "claude -p 'hello'", "codex exec hello", "opencode run hello", "pi -p hello", "hermes chat", "GET /.well-known/agent.json", "A2A agent card", "echo hello > ~/.claude/agents/inbox.txt", "fs.writeFile('../agents/inbox.txt', 'hello')", "cp message.txt ~/.pi/agent/inbox.txt", "mkdir ~/.openclaw/agents/shared"]
+  };
+  for (const [id, lines] of Object.entries(groups)) {
+    await writeFile(path.join(root, "cases.ts"), lines.join("\n"));
+    const check = (await auditSkill({ source: root }))[id];
+    assert.equal(check.findings.filter((item) => item.path.endsWith("cases.ts")).length, lines.length, id);
+    assert.ok(check.findings.every((item) => item.risk === "high"));
+  }
+}));
+
+test("permission inspection caps text reads, skips binaries and never executes scripts", async () => fixture(async (root) => {
+  await writeFile(path.join(root, "large.js"), "x".repeat(1024 * 1024 + 1));
+  await writeFile(path.join(root, "binary.js"), Buffer.from("\0curl https://example.test"));
+  await writeFile(path.join(root, "run"), "#!/bin/sh\ncurl https://example.test\ntouch executed\n");
+  await symlink(path.join(root, "run"), path.join(root, "linked.sh"));
+  const checked = await auditSkill({ source: root });
+  for (const id of permissionIds) {
+    assert.ok(checked[id].limitations.some((item) => item.reason === "permission_file_size_limit"));
+    assert.ok(checked[id].limitations.some((item) => item.reason === "uninspected_special_file"));
+    assert.ok(!checked[id].findings.some((item) => item.path.endsWith("binary.js")));
+  }
+  assert.ok(checked.external_network_access.findings.some((item) => item.path.endsWith("/run")));
+  await assert.rejects(access(path.join(root, "executed")), { code: "ENOENT" });
+}));
+
+test("permission policy applies off, warn, block and exact Skill allowlists to cached evidence", async () => {
+  const source = path.join(permissionRoot, "hermes/skills/network");
+  const inventory = await scanRoots({ roots: [source], runtime: "hermes", home: permissionRoot, cwd: source });
+  const skill = inventory.components[0];
+  const off = analyzeInventory(inventory, { mode: "off" });
+  assert.ok(off.requiredChecks.filter((check) => permissionIds.includes(check.id)).every((check) => check.status === "skipped" && check.skippedSkills === 1));
+  assert.ok(off.findings.every((item) => !permissionIds.includes(item.type)));
+  assert.equal(off.permissionBlocked, false);
+  assert.equal(analyzeInventory(inventory, { mode: "warn" }).permissionBlocked, false);
+  const block = analyzeInventory(inventory, { mode: "off", overrides: ["external_network_access=block"] });
+  assert.equal(block.permissionBlocked, true);
+  assert.deepEqual(block.blockedPermissionChecks, ["external_network_access"]);
+  assert.match(formatAnalysis(block), /Permission policy blocked: external_network_access/);
+  assert.match(formatAnalysis(block), /mode=block/);
+  assert.equal(analyzeInventory(inventory, { mode: "block", allowSkills: [skill.id] }).permissionBlocked, false);
+  assert.equal(analyzeInventory(inventory, { mode: "block", allowSkills: [skill.name] }).permissionBlocked, true);
+  assert.throws(() => analyzeInventory(inventory, { mode: "oops" }), /Invalid permission check policy/);
+  assert.throws(() => analyzeInventory(inventory, { overrides: ["python_bytecode=off"] }), /Invalid permission check policy/);
+  assert.equal(analyzeInventory({ components: [] }, { mode: "off" }).requiredChecks.find((check) => check.id === permissionIds[0]).status, "skipped");
+  const cached = structuredClone(inventory);
+  delete cached.components[0].auditChecks;
+  assert.equal(analyzeInventory(cached, { mode: "block" }).permissionBlocked, false);
+  assert.ok(analyzeInventory(cached).requiredChecks.every((check) => check.status === "unknown"));
+});
+
+test("CLI permission flags and environment affect analyze exit codes without executing scanned content", async () => {
+  const cli = new URL("../src/cli.js", import.meta.url).pathname;
+  const source = path.join(permissionRoot, "hermes/skills/network");
+  const args = [cli, "analyze", "--runtime", "hermes", "--root", source, "--json"];
+  const env = { ...process.env, OWNHOW_PERMISSION_CHECKS: "warn" };
+  assert.equal(JSON.parse((await exec(process.execPath, args, { env })).stdout).permissionBlocked, false);
+  for (const [flags, variable] of [
+    [["--permission-checks=block"], "warn"],
+    [["--permission-checks", "off", "--permission-check", "external_network_access=block"], "warn"],
+    [[], "block"], [[], "external_network_access=block,self_log_tampering=off"],
+    [["--permission-check=external_network_access=block"], "warn"]
+  ]) {
+    await assert.rejects(exec(process.execPath, [...args, ...flags], { env: { ...env, OWNHOW_PERMISSION_CHECKS: variable } }), (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(JSON.parse(error.stdout).permissionBlocked, true);
+      return true;
+    });
+  }
+  const off = JSON.parse((await exec(process.execPath, [...args, "--permission-checks=off"], { env: { ...env, OWNHOW_PERMISSION_CHECKS: "block" } })).stdout);
+  assert.ok(off.requiredChecks.filter((check) => permissionIds.includes(check.id)).every((check) => check.status === "skipped"));
+  const initial = JSON.parse((await exec(process.execPath, args, { env })).stdout);
+  const id = initial.requiredChecks.find((check) => check.id === "external_network_access").results[0].componentId;
+  const allowed = JSON.parse((await exec(process.execPath, [...args, "--permission-checks=block", `--permission-allow-skill=${id}`], { env })).stdout);
+  assert.equal(allowed.permissionBlocked, false);
+  await assert.rejects(exec(process.execPath, [...args, "--permission-checks=invalid"], { env }), /Invalid permission check policy/);
+});
+
+
+test("declarations cover agent home directories and network effects without misreading package links", async () => fixture(async (root) => {
+  const homes = [".claude", ".codex", ".hermes", ".pi", ".config/opencode", ".openclaw"];
+  const source = path.join(root, "skills", "review");
+  await artifact(path.join(source, "SKILL.md"), `---\nname: declaration-fixture\nallowed-tools:\n  - Task\n  - Agent\n  - WebFetch\nside_effects: [network_access]\nwrites:\n${homes.map((name) => `  - '~/${name}'`).join("\n")}\n---\nUse the Task tool.\n`);
+  await artifact(path.join(root, "package.json"), JSON.stringify({ pi: { skills: ["./skills"] }, bugs: { url: "https://example.test/issues" }, mcpServers: { actual: { url: "https://example.test/mcp" } } }, null, 2));
+  const checked = await auditSkill({ source }, { home: root, cwd: root });
+  assert.equal(checked.cross_agent_communication.findings.filter((item) => item.reason === "declared_agent_write").length, homes.length);
+  assert.equal(checked.cross_agent_communication.findings.filter((item) => item.reason === "declared_agent_tool").length, 2);
+  assert.ok(checked.cross_agent_communication.findings.some((item) => item.risk === "low"));
+  assert.ok(checked.external_network_access.findings.some((item) => item.reason === "declared_network_effect"));
+  const urls = checked.external_network_access.findings.filter((item) => item.reason === "remote_server_url");
+  assert.equal(urls.length, 1);
+  assert.match(urls[0].evidence, /example.test\/mcp/);
+}));
+
+test("a symlinked plugin manifest directory remains an explicit limitation", async () => fixture(async (root) => {
+  const source = path.join(root, "skills", "review");
+  await artifact(path.join(source, "SKILL.md"), "---\nname: linked-manifest\n---\n");
+  const outside = path.join(root, "outside");
+  await artifact(path.join(outside, "plugin.json"), '{"url":"https://example.test/mcp"}');
+  await symlink(outside, path.join(root, ".claude-plugin"), "dir");
+  const checked = await auditSkill({ source, pluginRoot: root });
+  for (const id of permissionIds) {
+    assert.equal(checked[id].status, "unknown");
+    assert.ok(checked[id].limitations.some((item) => item.reason === "uninspected_special_file"));
+  }
 }));

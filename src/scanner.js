@@ -196,7 +196,7 @@ async function readSkill(skillFile, plugin, sourceRoot, runtime, scanCache = nul
   return {
     id: componentId("skill", directory, sourceRoot), kind: "skill", runtime, name, skillName,
     version: String(metadata.version ?? plugin?.version ?? "unversioned"), description,
-    source: directory, plugin: plugin?.name ?? null, pluginVersion: plugin?.version ?? null,
+    source: directory, pluginRoot: plugin?.source ?? null, plugin: plugin?.name ?? null, pluginVersion: plugin?.version ?? null,
     lifecycle: lifecycle(),
     metadata, metadataError, triggers: normalizedList(metadata.triggers ?? metadata.when), excludes: normalizedList(metadata.excludes ?? metadata.avoid),
     reads: normalizedList(metadata.reads), writes: normalizedList(metadata.writes), tools: normalizedList(metadata.tools),
@@ -406,7 +406,7 @@ export async function scanRoots({ roots = defaultRoots(), cwd = process.cwd(), r
         : component.source;
       let auditChecks;
       if (component.kind === "skill") {
-        const key = JSON.stringify([canonicalSource, cwd, home, component.reads, component.writes, component.metadataError]);
+        const key = JSON.stringify([canonicalSource, cwd, home, component.reads, component.writes, component.metadataError, component.pluginRoot, component.tools, component.sideEffects]);
         if (!scanCache.audits.has(key)) scanCache.audits.set(key, auditSkill({ ...component, source: canonicalSource }, { cwd, home }));
         auditChecks = await scanCache.audits.get(key);
       }

@@ -2,10 +2,16 @@ import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises
 import { execFile } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
+import { permissionChecks } from "./permission-checks.js";
 
 export const REQUIRED_CHECKS = Object.freeze([
   Object.freeze({ id: "python_bytecode", name: "Stale/mismatched Python bytecode", required: true, reference: "https://arxiv.org/abs/2610.10612" }),
-  Object.freeze({ id: "cross_session_residue", name: "Cross-session file residue", required: true, reference: "https://arxiv.org/abs/2610.13227" })
+  Object.freeze({ id: "cross_session_residue", name: "Cross-session file residue", required: true, reference: "https://arxiv.org/abs/2610.13227" }),
+  ...[
+    ["self_log_tampering", "Self-log tampering"],
+    ["external_network_access", "External network access"],
+    ["cross_agent_communication", "Cross-agent communication"]
+  ].map(([id, name]) => Object.freeze({ id, name, required: true, reference: "https://casp.ac/reports/intelligence-explosion" }))
 ]);
 
 const MAX_ENTRIES = 10000;
@@ -196,9 +202,10 @@ export async function auditSkill(component, { hashSource = pythonSourceHash, cwd
   if (!path.isAbsolute(component.source ?? "")) return Object.fromEntries(REQUIRED_CHECKS.map(({ id }) => [id, result(id, 0, [], [issue("source_unavailable", component.source, "The runtime did not provide a local Skill directory.")])]));
   const root = await realpath(component.source).catch(() => component.source);
   const { files, limitations } = await artifacts(root);
-  const [pythonBytecode, crossSessionResidue] = await Promise.all([
+  const [pythonBytecode, crossSessionResidue, permissions] = await Promise.all([
     bytecodeCheck(root, files, limitations, hashSource),
-    residueCheck(component, root, files, limitations, { cwd, home })
+    residueCheck(component, root, files, limitations, { cwd, home }),
+    permissionChecks(component, root, files, limitations, { cwd, home }, artifacts)
   ]);
-  return { python_bytecode: pythonBytecode, cross_session_residue: crossSessionResidue };
+  return { python_bytecode: pythonBytecode, cross_session_residue: crossSessionResidue, ...permissions };
 }

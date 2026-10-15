@@ -1,5 +1,6 @@
 import { matchingTokens, overlapScore, tokenize } from "./text.js";
 import { REQUIRED_CHECKS } from "./audit-checks.js";
+import { permissionPolicy } from "./permission-checks.js";
 
 // These words occur in most Skill descriptions and do not provide useful
 // evidence that two Skills should be compared. `text.js` already removes
@@ -49,10 +50,11 @@ export function sameSource(left, right) {
   return Boolean((left.canonicalSource || left.source) && (left.canonicalSource || left.source) === (right.canonicalSource || right.source));
 }
 
-export function analyzeInventory(inventory) {
+export function analyzeInventory(inventory, permissionOptions = {}) {
+  const policy = permissionPolicy(permissionOptions);
   const components = analysisComponents(inventory).filter((component) => component.kind === "skill");
   const findings = [];
-  const requiredChecks = REQUIRED_CHECKS.map((check) => ({ ...check, status: "unknown", passedSkills: 0, findingSkills: 0, unknownSkills: 0, results: [] }));
+  const requiredChecks = REQUIRED_CHECKS.map((check) => ({ ...check, status: "unknown", ...(policy.modes[check.id] ? { mode: policy.modes[check.id] } : {}), passedSkills: 0, findingSkills: 0, unknownSkills: 0, skippedSkills: 0, results: [] }));
   const coverage = { totalSkills: components.length, missingDescription: 0, missingTriggers: 0, missingTools: 0, metadataErrors: 0 };
   const lifecycle = { discovered: 0, installed: 0, enabled: 0, sessionVisible: 0, actualUsed: 0, unknownInstallation: 0, unknownEnabled: 0, unknownSessionVisibility: 0, unknownActualUsed: 0 };
   const riskInventory = {};
@@ -60,8 +62,10 @@ export function analyzeInventory(inventory) {
   const tokens = components.map((component) => tokenize(`${component.name} ${component.description} ${(component.triggers ?? []).join(" ")}`));
   for (const component of components) {
     for (const check of requiredChecks) {
-      const evidence = component.auditChecks?.[check.id];
-      check.results.push({ componentId: component.id, status: evidence?.status ?? "unknown", inspected: evidence?.inspected ?? 0, findingCount: evidence?.findings?.length ?? 0,
+      const skipped = Boolean(check.mode && (check.mode === "off" || policy.allowSkills.includes(component.id)));
+      const evidence = skipped ? { status: "skipped", inspected: 0, findings: [], limitations: [] } : component.auditChecks?.[check.id];
+      if (skipped) check.skippedSkills += 1;
+      check.results.push({ componentId: component.id, status: evidence?.status ?? "unknown", ...(check.mode ? { mode: check.mode, allowlisted: skipped && check.mode !== "off" } : {}), inspected: evidence?.inspected ?? 0, findingCount: evidence?.findings?.length ?? 0,
         limitations: evidence?.limitations ?? [{ reason: "check_evidence_unavailable", path: component.source ?? null, message: "This inventory has no evidence for the required check; rescan live sources." }] });
       if (evidence?.status === "pass") check.passedSkills += 1;
       if (evidence?.status === "findings") check.findingSkills += 1;
@@ -80,7 +84,7 @@ export function analyzeInventory(inventory) {
     for (const risk of riskSignals(component)) riskInventory[risk] = (riskInventory[risk] ?? 0) + 1;
     for (const hint of riskHints(component)) hintInventory[hint] = (hintInventory[hint] ?? 0) + 1;
   }
-  for (const check of requiredChecks) check.status = check.findingSkills ? "findings" : check.unknownSkills || !components.length ? "unknown" : "pass";
+  for (const check of requiredChecks) check.status = check.mode === "off" || components.length && check.skippedSkills === components.length ? "skipped" : check.findingSkills ? "findings" : check.unknownSkills || !components.length ? "unknown" : "pass";
   // Build exact and semantic indexes separately. Exact comparisons are part of
   // the analyzer contract and must remain complete even when a token is too
   // common to be useful for semantic candidate generation.
@@ -173,6 +177,8 @@ export function analyzeInventory(inventory) {
     riskInventory,
     hintInventory,
     requiredChecks,
+    permissionBlocked: requiredChecks.some((check) => check.mode === "block" && check.findingSkills > 0),
+    blockedPermissionChecks: requiredChecks.filter((check) => check.mode === "block" && check.findingSkills > 0).map((check) => check.id),
     comparisons: pairs.size,
     findings,
     actionableFindings,
