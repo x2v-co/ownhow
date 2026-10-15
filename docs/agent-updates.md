@@ -85,7 +85,7 @@ and optionally `OWNHOW_UPDATE_WEBHOOK_TOKEN` (Bearer credential). On release,
 the workflow posts:
 
 ```json
-{"event":"ownhow.release","version":"0.8.0","notice":"ownhow:update:v1:0.8.0","releaseUrl":"https://github.com/x2v-co/ownhow/releases/tag/v0.8.0"}
+{"event":"ownhow.release","version":"0.9.0","notice":"ownhow:update:v1:0.9.0","releaseUrl":"https://github.com/x2v-co/ownhow/releases/tag/v0.9.0"}
 ```
 
 Your gateway routes the notice to enrolled Agents. Queue it until each Agent's
