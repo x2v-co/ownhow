@@ -1,8 +1,8 @@
 {
   "name": "ownhow",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Local-first governance and evolution for personal AI methods",
-  "homepage": "https://ownhow.dev",
+  "homepage": "https://github.com/x2v-co/ownhow#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/x2v-co/ownhow.git"

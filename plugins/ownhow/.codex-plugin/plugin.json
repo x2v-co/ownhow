@@ -1,13 +1,13 @@
 {
   "name": "ownhow",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Inspect, select, and improve the local AI methods you own.",
   "author": {
     "name": "x2v-co",
     "email": "lgc.329@gmail.com",
     "url": "https://github.com/x2v-co"
   },
-  "homepage": "https://ownhow.dev",
+  "homepage": "https://github.com/x2v-co/ownhow",
   "repository": "https://github.com/x2v-co/ownhow",
   "license": "Apache-2.0",
   "keywords": [
@@ -24,7 +24,7 @@
     "longDescription": "OwnHow scans local Codex, Hermes, Claude Code, Pi, OpenCode, OpenClaw, and Skywork methods, explains task resolution and conflicts, records real outcomes, and evolves user-owned Personal Methods with explicit approval.",
     "developerName": "x2v-co",
     "category": "Productivity",
-    "websiteURL": "https://ownhow.dev",
+    "websiteURL": "https://github.com/x2v-co/ownhow",
     "capabilities": [
       "Inspect local methods",
       "Resolve task methods",
