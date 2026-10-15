@@ -11,7 +11,7 @@ import { openclawRuntime } from "./runtimes/openclaw.js";
 import { auditSkill } from "./audit-checks.js";
 
 const FRONTMATTER = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
-const TEMPORARY_OR_BUILD_DIRECTORIES = new Set([".review", ".smoke", ".worktree", ".worktrees", "worktree", "worktrees", "build", "dist", "out", "target", "coverage", ".next", ".turbo", ".tmp", "tmp"]);
+const TEMPORARY_OR_BUILD_DIRECTORIES = new Set([".ownhow-disabled", ".review", ".smoke", ".worktree", ".worktrees", "worktree", "worktrees", "build", "dist", "out", "target", "coverage", ".next", ".turbo", ".tmp", "tmp"]);
 const COMMON_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow", ...TEMPORARY_OR_BUILD_DIRECTORIES]);
 const HERMES_EXCLUDED_DIRECTORIES = new Set([".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules", "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache", ".mypy_cache", ...TEMPORARY_OR_BUILD_DIRECTORIES]);
 const CLAUDE_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".ownhow", ...TEMPORARY_OR_BUILD_DIRECTORIES]);

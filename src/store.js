@@ -57,6 +57,29 @@ export async function loadReceipts(stateDir) {
   }
 }
 
+// A missing runtime key means unrestricted selection; [] explicitly selects none.
+export async function loadSkillAllowlists(stateDir) {
+  return readJson(path.join(stateDir, "slim", "allowlists.json"), {});
+}
+
+export async function updateSkillAllowlist(stateDir, runtime, action, names) {
+  if (!["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork"].includes(runtime)) throw new Error("Select one concrete runtime for the allowlist.");
+  if (!["allow", "deny"].includes(action) || !names.length || names.some((name) => typeof name !== "string" || !name.trim())) throw new Error("allow/deny requires one or more Skill names.");
+  const allowlists = await loadSkillAllowlists(stateDir);
+  const selected = new Set(allowlists[runtime] ?? []);
+  for (const name of names) {
+    if (action === "allow") selected.add(name);
+    else selected.delete(name);
+  }
+  allowlists[runtime] = [...selected].sort();
+  await writeJson(path.join(stateDir, "slim", "allowlists.json"), allowlists);
+  return { runtime, allowlist: allowlists[runtime] };
+}
+
+export function skillAllowed(allowlists, runtime, name) {
+  return !Object.hasOwn(allowlists, runtime) || allowlists[runtime].includes(name);
+}
+
 export async function listJsonFiles(directory) {
   try {
     const names = await readdir(directory);

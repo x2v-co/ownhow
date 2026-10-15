@@ -162,6 +162,21 @@ The manifest must match one selected runtime. OwnHow trusts this host report; it
 
 Cross-runtime copies are informational. Same-session name and declared write collisions are reported separately from semantic overlap, which is a routing hint rather than proof of a behavioral conflict. Text-only risk hints do not become approval requirements. Resolve exposes per-field scores and exclusion reasons, and only adds an augment when that Skill explicitly declares `augments: [primary-skill-name]` in the same runtime.
 
+## Slim a Skill library
+
+Use `ownhow slim --runtime <runtime>` to review unused, overlapping, and oversized
+Skills with a suggested smaller set and per-Skill reasons. Unknown usage stays
+unknown. Create an explicit selection with `ownhow slim allow <name...> --runtime
+<runtime>`; `resolve` then considers only those names. `slim deny` removes names
+and `slim list` shows the saved lists.
+
+`ownhow slim apply --runtime <runtime>` previews runtime changes. Add `--write`
+to move supported private standalone Skills into a disabled directory;
+`slim restore --runtime <runtime> --write` brings them back. Files are never
+deleted. Unsupported installations get the allowlist and manual instructions.
+See [slimming and selection](docs/slimming.md) for evidence rules, defaults,
+runtime support, and recovery.
+
 ## Mandatory artifact checks
 
 Every live scan inspects the files of discovered Skills, including caches, temporary directories and build outputs that are excluded from Skill discovery. `analyze` reports these two required checks:
@@ -273,6 +288,7 @@ See [Receipt Bundle Protocol v2](docs/receipt-bundle-v2.md) for the evidence-ric
 | `scan` | Save an inventory with discovery and visibility states; leave source methods unchanged |
 | `analyze` | Detect duplicate names, semantic overlap, write collisions, missing metadata, risk surfaces, bytecode mismatches, and session residue |
 | `resolve <task>` | Produce a deterministic task plan with selection reasons and approval risks |
+| `slim [allow\|deny\|list\|apply\|restore]` | Review library size, select Skill names per runtime, and preview or explicitly apply reversible visibility changes |
 | `record <task>` | Save a local receipt with outcome, verification evidence, and optional correction |
 | `export` | Export an evidence-rich Receipt Bundle capsule for Agent-mediated recovery |
 | `import` | Validate a capsule and place it in the pending Inbox |

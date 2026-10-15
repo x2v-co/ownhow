@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { riskSignals, riskHints, analysisComponents } from "./analyzer.js";
 import { matchingTokens, overlapScore, tokenize, normalizeText } from "./text.js";
+import { skillAllowed } from "./store.js";
 
 const list = (value) => Array.isArray(value) ? value.map(String) : typeof value === "string" ? [value] : [];
 const compiledComponents = new WeakMap();
@@ -49,9 +50,9 @@ export function planDigest(plan) {
   const binding = { runtime: plan.runtime ?? "unknown", analysisScope: plan.analysisScope ?? "unknown", task: plan.task, methodId: plan.methodId ?? null, methodVersion: plan.methodVersion ?? null, correction: plan.correction ?? null, primary: plan.primary ?? null, augment: plan.augment ?? [], risks: plan.risks ?? [] };
   return createHash("sha256").update(JSON.stringify(binding)).digest("hex");
 }
-export function resolveTask(inventory, task, methods = []) {
+export function resolveTask(inventory, task, methods = [], { allowlists = {} } = {}) {
   const query = tokenize(task);
-  const candidates = analysisComponents(inventory).filter((component) => component.kind === "skill").map((component) => candidate(component, task, query)).sort((a, b) => b.score - a.score || a.component.id.localeCompare(b.component.id));
+  const candidates = analysisComponents(inventory).filter((component) => component.kind === "skill" && skillAllowed(allowlists, inventory.runtime && inventory.runtime !== "all" ? inventory.runtime : component.runtime, component.name)).map((component) => candidate(component, task, query)).sort((a, b) => b.score - a.score || a.component.id.localeCompare(b.component.id));
   const rankedMethods = methods.filter((entry) => !entry.disabled && (!entry.runtime || ["all", "unknown"].includes(entry.runtime) || !inventory.runtime || inventory.runtime === "all" || entry.runtime === inventory.runtime)).map((entry) => {
     let tokens = compiledMethods.get(entry);
     if (!tokens) { tokens = tokenize(entry.task); compiledMethods.set(entry, tokens); }
