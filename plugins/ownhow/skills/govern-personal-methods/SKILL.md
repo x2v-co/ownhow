@@ -55,12 +55,23 @@ Run commands directly when their stated preconditions are satisfied:
 ownhow scan --runtime <current-runtime>
 ownhow analyze --runtime <current-runtime>
 ownhow resolve "<task>" --runtime <current-runtime>
+ownhow slim --runtime <current-runtime>
 ownhow record "<task>" --outcome success --summary "<what was completed>" --evidence "<verification result>" --confidence high --verified-by user --governance '{"discovered":true,"matched":true,"loaded":true,"actualUsed":true,"verified":true}' --runtime <current-runtime>
 ownhow record "<task>" --outcome failure --correction "<user correction>" --runtime <current-runtime>
 ownhow propose
 ownhow apply <proposal-id>
 ownhow status
 ```
+
+For a large Skill library, use `slim` to review unused, overlapping, and oversized
+Skills and the reasons for a smaller suggested set. Keep unknown usage unknown.
+When the user requests explicit selection, `slim allow <name...>` and
+`slim deny <name...>` edit the local per-runtime allowlist; `resolve` honors it.
+Include `--runtime <current-runtime>` and review with `slim list`. `slim apply`
+and `slim restore` preview runtime changes; add `--write` only when the user has
+authorized those changes. Supported private standalone directories move
+reversibly; unsupported installations print the allowlist and manual
+instructions. Never delete Skill files. Restore retains the resolver allowlist.
 
 For adoption and reuse measurement, inspect telemetry without enabling it:
 
