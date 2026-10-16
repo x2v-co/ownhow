@@ -2,6 +2,10 @@
 
 Release notes for each version live in `docs/release-note-v<version>.md`.
 
+## Unreleased
+
+- Local telemetry: `slim`, `propose`, `apply` events; `telemetry enable --mode local --cohort ID`; `telemetry export --by-day`.
+
 ## 0.9.0 — 2026-10-15
 
 - Mandatory `python_bytecode` and `cross_session_residue` checks in `analyze` (#2).
