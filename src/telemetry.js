@@ -5,7 +5,14 @@ import { randomUUID } from "node:crypto";
 const SCHEMA_VERSION = "0.1";
 const MODES = new Set(["off", "local", "remote"]);
 const RUNTIMES = new Set(["codex", "hermes", "claude", "pi", "opencode", "openclaw", "skywork", "all", "unknown"]);
-const EVENT_TYPES = new Set(["analyze", "resolve", "record", "doctor", "upgrade"]);
+const EVENT_TYPES = new Set(["analyze", "resolve", "record", "doctor", "upgrade", "slim", "propose", "apply"]);
+const COHORT_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
+
+export function validateCohort(cohort) {
+  if (cohort === null || cohort === undefined || cohort === "") return null;
+  if (typeof cohort !== "string" || !COHORT_PATTERN.test(cohort)) throw new Error("--cohort must be 1-32 characters of letters, digits, _ or -.");
+  return cohort;
+}
 
 function telemetryDirectory(stateDir) { return path.join(stateDir, "telemetry"); }
 function configFile(stateDir) { return path.join(telemetryDirectory(stateDir), "config.json"); }
@@ -30,7 +37,7 @@ async function replaceText(file, text) {
 }
 
 function defaultConfig() {
-  return { schemaVersion: SCHEMA_VERSION, mode: "off", endpoint: null, agentId: null, consentAt: null, disabledAt: null };
+  return { schemaVersion: SCHEMA_VERSION, mode: "off", endpoint: null, agentId: null, cohort: null, consentAt: null, disabledAt: null };
 }
 
 function validateEndpoint(endpoint) {
@@ -49,7 +56,9 @@ export async function loadTelemetryConfig(stateDir) {
   return { ...defaultConfig(), ...config, endpoint: validateEndpoint(config.endpoint) };
 }
 
-export async function configureTelemetry(stateDir, { mode = "local", endpoint = null } = {}) {
+export async function configureTelemetry(stateDir, { mode = "local", endpoint = null, cohort = null } = {}) {
+  const safeCohort = validateCohort(cohort);
+  if (safeCohort && mode !== "local") throw new Error("--cohort is only supported in local telemetry mode.");
   if (!MODES.has(mode) || mode === "off") throw new Error("Telemetry enable mode must be local or remote.");
   const safeEndpoint = mode === "remote" ? validateEndpoint(endpoint) : null;
   if (mode === "remote" && !safeEndpoint) throw new Error("Remote telemetry requires an HTTPS --endpoint.");
@@ -59,6 +68,7 @@ export async function configureTelemetry(stateDir, { mode = "local", endpoint = 
     mode,
     endpoint: safeEndpoint,
     agentId: mode === "remote" ? previous.agentId ?? `agent-${randomUUID()}` : null,
+    cohort: safeCohort,
     consentAt: new Date().toISOString(),
     disabledAt: null
   };
@@ -96,11 +106,12 @@ function enumValue(value, allowed, fallback = null) { return allowed.has(value) 
 // Only accept aggregate, enumerable fields. This function intentionally has no
 // task/text/path fields, so callers cannot accidentally put sensitive content
 // into the telemetry ledger.
-export function sanitizeTelemetryEvent(event = {}) {
+export function sanitizeTelemetryEvent(event = {}, { now = new Date(), cohort = null } = {}) {
   const safe = {
     schemaVersion: SCHEMA_VERSION,
     id: `event-${randomUUID()}`,
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
+    cohort: validateCohort(cohort),
     type: enumValue(event.type, EVENT_TYPES, "unknown"),
     runtime: enumValue(event.runtime, RUNTIMES, "unknown"),
     scope: enumValue(event.scope, new Set(["session-visible", "runtime-roots", "unknown"]), "unknown"),
@@ -128,10 +139,10 @@ async function loadEvents(stateDir) {
   }
 }
 
-export async function recordTelemetryEvent(stateDir, event) {
+export async function recordTelemetryEvent(stateDir, event, { now = new Date() } = {}) {
   const config = await loadTelemetryConfig(stateDir);
   if (config.mode === "off") return { recorded: false, event: null };
-  const safe = sanitizeTelemetryEvent(event);
+  const safe = sanitizeTelemetryEvent(event, { now, cohort: config.mode === "local" ? config.cohort : null });
   await mkdir(telemetryDirectory(stateDir), { recursive: true });
   await appendFile(eventsFile(stateDir), `${JSON.stringify(safe)}\n`, "utf8");
   return { recorded: true, event: safe };
@@ -152,7 +163,24 @@ export async function telemetryStatus(stateDir) {
   };
 }
 
-export async function exportTelemetry(stateDir) { return loadEvents(stateDir); }
+export async function exportTelemetry(stateDir, { byDay = false } = {}) {
+  const events = await loadEvents(stateDir);
+  return byDay ? aggregateTelemetryByDay(events) : events;
+}
+
+// Groups events by UTC calendar date and counts which commands ran that day.
+export function aggregateTelemetryByDay(events) {
+  const days = new Map();
+  for (const event of events) {
+    const date = typeof event.createdAt === "string" ? event.createdAt.slice(0, 10) : "unknown";
+    const day = days.get(date) ?? { date, events: 0, commands: {}, cohorts: [] };
+    day.events += 1;
+    day.commands[event.type] = (day.commands[event.type] ?? 0) + 1;
+    if (event.cohort && !day.cohorts.includes(event.cohort)) day.cohorts.push(event.cohort);
+    days.set(date, day);
+  }
+  return [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map((day) => ({ ...day, cohorts: day.cohorts.sort() }));
+}
 
 export async function purgeTelemetry(stateDir) {
   await rm(eventsFile(stateDir), { force: true });

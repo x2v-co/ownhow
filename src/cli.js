@@ -29,7 +29,7 @@ function parseArgs(argv) {
       else options[key] = inline;
       continue;
     }
-    if (["json", "help", "cached", "fast", "reexport-imported", "apply", "write", "check", "auto", "enable-auto", "disable-auto", "snooze", "recover"].includes(key)) { options[key] = true; continue; }
+    if (["json", "help", "cached", "fast", "reexport-imported", "apply", "write", "check", "auto", "enable-auto", "disable-auto", "snooze", "recover", "by-day"].includes(key)) { options[key] = true; continue; }
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) throw new Error(`Missing value for --${key}`);
     index += 1;
@@ -68,9 +68,9 @@ Usage:
   ownhow upgrade --snooze --version VERSION|--notice NOTICE [--json]
   ownhow upgrade --recover [--json]
   ownhow telemetry status [--state PATH] [--json]
-  ownhow telemetry enable [--mode local|remote] [--endpoint HTTPS_URL] [--state PATH] [--json]
+  ownhow telemetry enable [--mode local|remote] [--endpoint HTTPS_URL] [--cohort ID] [--state PATH] [--json]
   ownhow telemetry disable [--state PATH] [--json]
-  ownhow telemetry export [--state PATH] [--json]
+  ownhow telemetry export [--by-day] [--state PATH] [--json]
   ownhow telemetry purge [--state PATH] [--json]
   ownhow telemetry send [--state PATH] [--json]
 
@@ -92,8 +92,13 @@ Slim never deletes files. Upgrade can replace explicitly selected OwnHow install
 
 function output(value, json, formatter = null) { process.stdout.write(`${json || !formatter ? JSON.stringify(value, null, 2) : formatter(value)}\n`); }
 function requireTask(parts) { const task = parts.join(" ").trim(); if (!task) throw new Error("Task is required."); return task; }
+function telemetryNow() {
+  const fixed = process.env.OWNHOW_TELEMETRY_NOW;
+  const date = fixed ? new Date(fixed) : new Date();
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
 async function recordTelemetrySafely(stateDir, event) {
-  try { await recordTelemetryEvent(stateDir, event); } catch { /* telemetry must never block the primary command */ }
+  try { await recordTelemetryEvent(stateDir, event, { now: telemetryNow() }); } catch { /* telemetry must never block the primary command */ }
 }
 function runtimeFor(options) {
   const runtime = options.runtime ?? process.env.OWNHOW_RUNTIME ?? (options.root ? "all" : null);
@@ -162,6 +167,22 @@ function inboxSummary(entry) {
   };
 }
 
+async function runPropose(stateDir, positional, options) {
+  const receipts = await loadReceipts(stateDir);
+  const requested = options.receipt ?? "latest";
+  const receipt = requested === "latest" ? [...receipts].reverse().find((item) => item.correction) : receipts.find((item) => item.id === requested);
+  if (!receipt) throw new Error("No matching receipt with a correction found.");
+  const proposal = createProposal(receipt);
+  await saveProposal(stateDir, proposal);
+  output(proposal, options.json, (value) => `Proposed ${value.id}\nTask: ${value.task}\nCorrection: ${value.correction}\nApply explicitly with: ownhow apply ${value.id}`);
+}
+async function runApply(stateDir, positional, options) {
+  const proposalId = positional[0];
+  if (!proposalId) throw new Error("Proposal id is required.");
+  const method = await applyProposal(stateDir, proposalId);
+  output(method, options.json, (value) => `Applied ${value.id}@${value.version}\nCorrection: ${value.correction}\nInstalled Skills were not changed.`);
+}
+
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (command === "--help" || command === "-h") { process.stdout.write(`${help()}\n`); return; }
@@ -170,6 +191,32 @@ async function main() {
   const stateDir = stateDirectory(options.state);
 
   if (command === "slim") {
+    const startedAt = Date.now();
+    try {
+      await runSlim(stateDir, positional, options);
+      await recordTelemetrySafely(stateDir, { type: "slim", result: "success", latencyMs: Date.now() - startedAt });
+    } catch (error) {
+      await recordTelemetrySafely(stateDir, { type: "slim", result: "failure", latencyMs: Date.now() - startedAt });
+      throw error;
+    }
+    return;
+  }
+  if (command === "propose" || command === "apply") {
+    const startedAt = Date.now();
+    try {
+      await (command === "propose" ? runPropose : runApply)(stateDir, positional, options);
+      await recordTelemetrySafely(stateDir, { type: command, result: "success", latencyMs: Date.now() - startedAt });
+    } catch (error) {
+      await recordTelemetrySafely(stateDir, { type: command, result: "failure", latencyMs: Date.now() - startedAt });
+      throw error;
+    }
+    return;
+  }
+  await mainRest(command, stateDir, positional, options);
+}
+
+async function runSlim(stateDir, positional, options) {
+  {
     const [action, ...names] = positional;
     if (options.write !== undefined && options.write !== true) throw new Error("--write is a boolean flag; pass it without a value.");
     if (options.write && !["apply", "restore"].includes(action)) throw new Error("--write is only supported by slim apply/restore.");
@@ -202,7 +249,9 @@ async function main() {
     }
     return;
   }
+}
 
+async function mainRest(command, stateDir, positional, options) {
   if (command === "telemetry") {
     const [action] = positional;
     if (!action || action === "status") {
@@ -210,8 +259,8 @@ async function main() {
       return;
     }
     if (action === "enable") {
-      const config = await configureTelemetry(stateDir, { mode: options.mode ?? "local", endpoint: options.endpoint ?? null });
-      output(config, options.json, (value) => `Telemetry enabled (${value.mode})${value.endpoint ? `\nEndpoint: ${value.endpoint}` : ""}`);
+      const config = await configureTelemetry(stateDir, { mode: options.mode ?? "local", endpoint: options.endpoint ?? null, cohort: options.cohort ?? null });
+      output(config, options.json, (value) => `Telemetry enabled (${value.mode})${value.endpoint ? `\nEndpoint: ${value.endpoint}` : ""}${value.cohort ? `\nCohort: ${value.cohort}` : ""}`);
       return;
     }
     if (action === "disable") {
@@ -220,7 +269,7 @@ async function main() {
       return;
     }
     if (action === "export") {
-      output(await exportTelemetry(stateDir), options.json);
+      output(await exportTelemetry(stateDir, { byDay: options["by-day"] === true }), options.json);
       return;
     }
     if (action === "purge") {
@@ -369,23 +418,6 @@ async function main() {
       return;
     }
     throw new Error("Inbox action must be show, accept, or reject.");
-  }
-  if (command === "propose") {
-    const receipts = await loadReceipts(stateDir);
-    const requested = options.receipt ?? "latest";
-    const receipt = requested === "latest" ? [...receipts].reverse().find((item) => item.correction) : receipts.find((item) => item.id === requested);
-    if (!receipt) throw new Error("No matching receipt with a correction found.");
-    const proposal = createProposal(receipt);
-    await saveProposal(stateDir, proposal);
-    output(proposal, options.json, (value) => `Proposed ${value.id}\nTask: ${value.task}\nCorrection: ${value.correction}\nApply explicitly with: ownhow apply ${value.id}`);
-    return;
-  }
-  if (command === "apply") {
-    const proposalId = positional[0];
-    if (!proposalId) throw new Error("Proposal id is required.");
-    const method = await applyProposal(stateDir, proposalId);
-    output(method, options.json, (value) => `Applied ${value.id}@${value.version}\nCorrection: ${value.correction}\nInstalled Skills were not changed.`);
-    return;
   }
   if (command === "doctor") {
     const startedAt = Date.now();
