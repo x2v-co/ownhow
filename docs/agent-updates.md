@@ -85,7 +85,7 @@ and optionally `OWNHOW_UPDATE_WEBHOOK_TOKEN` (Bearer credential). On release,
 the workflow posts:
 
 ```json
-{"event":"ownhow.release","version":"0.9.0","notice":"ownhow:update:v1:0.9.0","releaseUrl":"https://github.com/x2v-co/ownhow/releases/tag/v0.9.0"}
+{"event":"ownhow.release","version":"0.10.0","notice":"ownhow:update:v1:0.10.0","releaseUrl":"https://github.com/x2v-co/ownhow/releases/tag/v0.10.0"}
 ```
 
 Your gateway routes the notice to enrolled Agents. Queue it until each Agent's
@@ -105,6 +105,27 @@ Absent webhook secrets, the workflow skips sending and leaves the notice asset
 available. Failed delivery fails the notification step; rerun that step or send
 the same notice through the existing gateway. No remote Agent is enrolled or
 messaged just by building this code.
+
+## npm registry
+
+The same `vX.Y.Z` tag also publishes the public package `ownhow`. Agent updates
+still download the GitHub Release bundle; npm is the install path for
+`npm install --global ownhow`.
+
+The publish job runs `npm run verify`, then `npm publish --provenance --access public`.
+Provenance uses GitHub OIDC (`id-token: write`) and requires this public
+repository. Registry auth uses the repository secret `NPM_TOKEN` when it is
+set. npm cannot create a brand-new package with a trusted publisher, so the
+first publish needs that secret: an npm granular access token, or a classic
+automation token, with permission to publish `ownhow` and with 2FA bypass
+enabled for CI. Do not put the token value in the repository.
+
+After `ownhow` exists, a maintainer can add a trusted publisher on npmjs.com
+for GitHub Actions: organization `x2v-co`, repository `ownhow`, workflow
+filename `release.yml`, and allowed action `npm publish`. The secret can then
+be removed; later tags authenticate with OIDC. A trusted publisher created
+after 2026-09-03 allows `npm stage publish` unless `npm publish` is also
+selected.
 
 ## Failure recovery and limitations
 

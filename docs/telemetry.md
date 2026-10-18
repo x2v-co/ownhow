@@ -1,9 +1,22 @@
 # OwnHow Telemetry Endpoint
 
-OwnHow does not require a telemetry server. A server is useful only when a
-team explicitly wants aggregate adoption and reuse statistics across Agents.
-The CLI sends data only after `ownhow telemetry enable --mode remote` and a
-manual `ownhow telemetry send` (or an explicitly supervised equivalent).
+OwnHow does not require a telemetry server. Telemetry is off by default.
+Local mode is an explicit opt-in for an internal beta:
+
+```bash
+ownhow telemetry enable --mode local --cohort beta
+ownhow telemetry export --by-day
+```
+
+`--cohort` accepts 1–32 letters, digits, `_`, or `-`, and is stored only on
+local events. `export --by-day` counts events by UTC date, command
+(`analyze`, `resolve`, `record`, `doctor`, `upgrade`, `slim`, `propose`,
+`apply`), and cohort. Nothing is uploaded until remote mode is enabled.
+
+A server is useful only when a team explicitly wants aggregate adoption and
+reuse statistics across Agents. The CLI sends data only after
+`ownhow telemetry enable --mode remote` and a manual `ownhow telemetry send`
+(or an explicitly supervised equivalent). Remote events omit `cohort`.
 
 The endpoint must be HTTPS and must not contain URL credentials or a fragment.
 Each request is a JSON `POST` with this shape:

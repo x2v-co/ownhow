@@ -77,19 +77,19 @@
         <p>Requires Node.js 22 or newer. Local <code>python3</code> with matching bytecode support enables PEP 552 source-hash verification; unavailable verification is reported as unknown.</p>
       </div>
       <h3>Install the CLI</h3>
-      <pre aria-label="CLI installation commands"><code>npm install --global github:x2v-co/ownhow#v0.9.0
+      <pre aria-label="CLI installation commands"><code>npm install --global ownhow@0.10.0
 ownhow --help</code></pre>
       <h3>Connect your agent</h3>
       <p>Choose an optional Plugin or standalone Skill. Commands below are copied from the README.</p>
       <details open>
         <summary>Codex Plugin</summary>
-        <pre><code>codex plugin marketplace add x2v-co/ownhow --ref v0.9.0
+        <pre><code>codex plugin marketplace add x2v-co/ownhow --ref v0.10.0
 codex plugin add ownhow@x2v</code></pre>
         <p>Start a new Codex chat after installation.</p>
       </details>
       <details>
         <summary>Hermes Skill</summary>
-        <pre><code>hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.9.0/skills/ownhow-governance/SKILL.md --yes</code></pre>
+        <pre><code>hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.10.0/skills/ownhow-governance/SKILL.md --yes</code></pre>
       </details>
       <details>
         <summary>Claude Code Plugin</summary>
@@ -99,16 +99,16 @@ claude plugin install ownhow@x2v --scope user</code></pre>
       </details>
       <details>
         <summary>Pi Package</summary>
-        <pre><code>pi install git:github.com/x2v-co/ownhow@v0.9.0</code></pre>
+        <pre><code>pi install git:github.com/x2v-co/ownhow@v0.10.0</code></pre>
       </details>
       <details>
         <summary>OpenCode Skill</summary>
-        <pre><code>git clone --branch v0.9.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+        <pre><code>git clone --branch v0.10.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 ln -s ~/.local/share/ownhow/skills/ownhow-governance ~/.config/opencode/skills/ownhow-governance</code></pre>
       </details>
       <details>
         <summary>OpenClaw Skill</summary>
-        <pre><code>git clone --branch v0.9.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+        <pre><code>git clone --branch v0.10.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global --as ownhow-governance</code></pre>
       </details>
       <p class="note">Governance commands do not upload source files or modify installed Plugins and Skills. The explicit updater can replace the selected OwnHow CLI and standalone Skill.</p>

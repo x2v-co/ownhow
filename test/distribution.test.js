@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "../src/scanner.js";
 import { REQUIRED_CHECKS } from "../src/audit-checks.js";
+import { loadTelemetryConfig } from "../src/telemetry.js";
+
+const exec = promisify(execFile);
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const readJson = async (file) => JSON.parse(await readFile(path.join(root, file), "utf8"));
@@ -48,4 +53,18 @@ test("keeps the CLI, Plugin, marketplace, and Skill release metadata aligned", a
   assert.match(skillText, /ownhow upgrade --auto --json/);
   assert.match(skillText, /approval_required/);
   assert.match(hermesSkillText, /ownhow upgrade --auto --json/);
+  assert.equal(packageMetadata.private, undefined);
+  assert.equal(packageMetadata.bin.ownhow, "src/cli.js");
+  assert.ok(packageMetadata.files.includes("src/"));
+  assert.ok(packageMetadata.files.includes("docs/"));
+});
+
+test("the published tarball includes the CLI and opt-in telemetry", async () => {
+  const { stdout } = await exec("npm", ["pack", "--dry-run", "--json"], { cwd: root });
+  const packed = JSON.parse(stdout);
+  const paths = new Set(packed[0].files.map((file) => file.path));
+  for (const file of ["src/cli.js", "src/telemetry.js", "docs/telemetry.md", "package.json"]) {
+    assert.ok(paths.has(file), file);
+  }
+  assert.equal((await loadTelemetryConfig(path.join(root, "does-not-exist"))).mode, "off");
 });

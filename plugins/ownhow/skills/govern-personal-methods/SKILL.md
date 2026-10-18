@@ -1,6 +1,6 @@
 ---
 name: govern-personal-methods
-version: 0.9.0
+version: 0.10.0
 description: Govern the user's local AI Plugins, Skills, and Personal Methods with the OwnHow CLI across Codex, Hermes, Claude Code, Pi, OpenCode, OpenClaw, and Skywork. Use when the user asks what methods are installed, wants conflicts analyzed, asks which Skill or Plugin should handle a task, wants to record or remotely recover a real outcome, or wants to propose or apply an improvement to a user-owned Personal Method. 也用于检查本地 AI 方法、分析 Skill 或 Plugin 冲突、为当前任务选择方法、记录或远程回收真实结果，以及生成或应用个人方法改进。
 aliases: [ownhow]
 required_checks: [python_bytecode, cross_session_residue, self_log_tampering, external_network_access, cross_agent_communication]

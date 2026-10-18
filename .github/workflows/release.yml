@@ -3,10 +3,12 @@ on:
   push:
     tags: ['v*']
 permissions:
-  contents: write
+  contents: read
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,3 +30,42 @@ jobs:
           OWNHOW_UPDATE_WEBHOOK: ${{ secrets.OWNHOW_UPDATE_WEBHOOK }}
           OWNHOW_UPDATE_WEBHOOK_TOKEN: ${{ secrets.OWNHOW_UPDATE_WEBHOOK_TOKEN }}
         run: node scripts/notify-release.js
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate stable release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node --input-type=module -e 'import fs from "node:fs"; const v = JSON.parse(fs.readFileSync("package.json")).version; if (!/^\d+\.\d+\.\d+$/.test(v) || process.env.RELEASE_TAG !== `v${v}`) process.exit(1)'
+      - name: Install npm CLI with trusted publishing
+        run: npm install -g npm@11.21.1
+      - run: npm ci --ignore-scripts
+      - run: npm run verify
+      - name: Publish to the public npm registry
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # npm cannot create a new package with a trusted publisher
+          # (npm/cli#8544), so the first publish needs the NPM_TOKEN
+          # repository secret. After the package exists, remove the secret
+          # and configure a trusted publisher for release.yml with npm publish
+          # allowed; this job then authenticates with OIDC. Write the npmrc
+          # auth line only when the secret is set — an empty _authToken skips
+          # OIDC. The line references NODE_AUTH_TOKEN so the secret is not
+          # copied onto the command line.
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            export NODE_AUTH_TOKEN="${NPM_TOKEN}"
+            printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' >> "${HOME}/.npmrc"
+            echo "Publishing with the NPM_TOKEN repository secret."
+          else
+            echo "NPM_TOKEN is unset. Publishing with the trusted publisher for release.yml."
+          fi
+          npm publish --provenance --access public --ignore-scripts
