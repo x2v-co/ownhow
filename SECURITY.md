@@ -35,6 +35,8 @@ ownhow telemetry send
 ```
 
 Local telemetry is an aggregate event ledger under `<state>/telemetry/`.
+A `--cohort` label is kept on that local ledger only and is omitted from
+remote submissions.
 Events contain only bounded categories and buckets: runtime and discovery
 scope, command result, cache mode, latency, candidate/Skill/finding counts,
 Personal Method use, correction presence, and verification category. The

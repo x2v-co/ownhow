@@ -1,6 +1,6 @@
 {
   "name": "ownhow",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Local-first governance and evolution for personal AI methods",
   "homepage": "https://github.com/x2v-co/ownhow#readme",
   "repository": {
@@ -12,7 +12,7 @@
   },
   "type": "module",
   "bin": {
-    "ownhow": "./src/cli.js"
+    "ownhow": "src/cli.js"
   },
   "files": [
     "src/",

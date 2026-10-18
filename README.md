@@ -11,17 +11,17 @@ Governance commands do not upload source files, call a model, or modify installe
 
 ## Install
 
-Install the CLI directly from this repository:
+Install the CLI from the public npm registry:
 
 ```bash
-npm install --global github:x2v-co/ownhow#v0.9.0
+npm install --global ownhow@0.10.0
 ownhow --help
 ```
 
 Add the OwnHow marketplace and install the Codex Plugin (optional):
 
 ```bash
-codex plugin marketplace add x2v-co/ownhow --ref v0.9.0
+codex plugin marketplace add x2v-co/ownhow --ref v0.10.0
 codex plugin add ownhow@x2v
 ```
 
@@ -32,7 +32,7 @@ Start a new Codex chat after installing the Plugin. The Plugin provides the gove
 Install the standalone Hermes Skill into the active Hermes profile:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.9.0/skills/ownhow-governance/SKILL.md --yes
+hermes skills install https://raw.githubusercontent.com/x2v-co/ownhow/v0.10.0/skills/ownhow-governance/SKILL.md --yes
 ```
 
 The CLI discovers active Hermes skills under `~/.hermes/skills` automatically, following Hermes' archive, support-directory, platform, environment, disabled-skill, symlink, and duplicate-name discovery rules. Use `--runtime hermes` to keep analysis scoped to Hermes, or `--root PATH` for a custom `HERMES_HOME`/profile.
@@ -55,7 +55,7 @@ The static inventory includes project Skills active at session startup. Claude C
 Install OwnHow as a Pi Package:
 
 ```bash
-pi install git:github.com/x2v-co/ownhow@v0.9.0
+pi install git:github.com/x2v-co/ownhow@v0.10.0
 ```
 
 OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and `.agents` discovery, settings filters, symlink deduplication, and Package-contributed Skills. Use `--runtime pi` for Pi-only analysis.
@@ -65,7 +65,7 @@ OwnHow follows Pi's project trust gate, project-over-user precedence, `.pi` and 
 Install the standalone Skill in OpenCode's global Skill directory:
 
 ```bash
-git clone --branch v0.9.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.10.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 ln -s ~/.local/share/ownhow/skills/ownhow-governance ~/.config/opencode/skills/ownhow-governance
 ```
 
@@ -76,7 +76,7 @@ OwnHow uses `opencode debug skill` as the authoritative live inventory when Open
 Install the standalone Skill globally:
 
 ```bash
-git clone --branch v0.9.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
+git clone --branch v0.10.0 --depth 1 https://github.com/x2v-co/ownhow.git ~/.local/share/ownhow
 openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global --as ownhow-governance
 ```
 
@@ -102,9 +102,9 @@ Enable it only when you want to measure adoption or diagnose aggregate usage:
 
 ```bash
 # Keep an aggregate event ledger on this machine (recommended starting point)
-ownhow telemetry enable --mode local
+ownhow telemetry enable --mode local --cohort beta
 ownhow telemetry status
-ownhow telemetry export
+ownhow telemetry export --by-day
 
 # Explicitly opt in to a server; the endpoint must use HTTPS
 ownhow telemetry enable --mode remote --endpoint https://telemetry.example.invalid/events
@@ -116,10 +116,14 @@ ownhow telemetry purge
 ```
 
 The local ledger is stored under `<state>/telemetry/` (`~/.ownhow/telemetry/`
-by default). Remote mode sends only bucketed, aggregate counters and outcome
-categories: runtime/scope, command result, cache mode, latency, candidate and
-Skill counts, finding counts, whether a Personal Method was used, whether a
-correction was provided, and the verification category. It does not send task
+by default). With local mode enabled, `analyze`, `resolve`, `record`, `doctor`,
+`upgrade`, `slim`, `propose`, and `apply` can append one aggregate event.
+`--cohort` is a local label for an internal beta and is not sent in remote
+mode. `export --by-day` groups that ledger by UTC date. Remote mode sends only
+bucketed, aggregate counters and outcome categories: runtime/scope, command
+result, cache mode, latency, candidate and Skill counts, finding counts,
+whether a Personal Method was used, whether a correction was provided, and the
+verification category. It does not send task
 text, prompts, receipts, evidence, corrections, Skill or Plugin content,
 Personal Methods, filesystem paths, machine names, or user identity. The
 server receives statistics only: it cannot install, update, enable, disable,
@@ -311,7 +315,7 @@ npm test
 npm run verify
 ```
 
-After editing the Plugin workflow, run `node scripts/sync-skills.js` to regenerate the standalone Skill. Verification checks that both workflows stay aligned. This release publishes the CLI, standalone Skill, and update bundle as v0.9.0.
+After editing the Plugin workflow, run `node scripts/sync-skills.js` to regenerate the standalone Skill. Verification checks that both workflows stay aligned. This release publishes the CLI, standalone Skill, update bundle, and npm package `ownhow` as v0.10.0.
 
 ## Runtime support and MVP boundary
 
