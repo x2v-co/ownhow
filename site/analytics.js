@@ -125,10 +125,10 @@
       page_location: "https://ownhow.dev/",
       page_referrer: ""
     };
-    // Only the controlled nonmain branch alias; deployment hashes can also
+    // Only the receipt-listed nonmain branch alias; deployment hashes can also
     // serve production. The deployment receipt/source binding is checked separately.
     const hostname = new URL(window.location.href).hostname;
-    if (hostname === "fix-ownhow-search-consent-20261118.ownhow.pages.dev") {
+    if (hostname === "fix-ownhow-search-consent-20.ownhow.pages.dev") {
       Object.assign(options, {
         debug_mode: true,
         campaign_name: "ownhow_preview_validation",

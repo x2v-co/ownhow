@@ -643,8 +643,8 @@ function previewMarkers(options, expected) {
 }
 
 test("controlled OwnHow branch alias configures static markers after shipped-ID consent and before append", () => {
-  for (const host of ["fix-ownhow-search-consent-20261118.ownhow.pages.dev",
-    "FIX-OWNHOW-SEARCH-CONSENT-20261118.OWNHOW.PAGES.DEV"]) {
+  for (const host of ["fix-ownhow-search-consent-20.ownhow.pages.dev",
+    "FIX-OWNHOW-SEARCH-CONSENT-20.OWNHOW.PAGES.DEV"]) {
     const href = `https://${host}/?utm_source=private-source&utm_campaign=private-campaign#private-fragment`;
     for (const mode of ["immediate", "legacy"]) {
       const b = browser({ shippedConfig: true, href });
@@ -692,6 +692,8 @@ test("controlled OwnHow branch alias configures static markers after shipped-ID 
 
 test("production and lookalike hosts omit every preview field even with marker-like queries", () => {
   for (const host of ["ownhow.dev", "www.ownhow.dev", "ownhow.pages.dev", "other.pages.dev",
+    "fix-ownhow-search-consent-20261118.ownhow.pages.dev",
+    "FIX-OWNHOW-SEARCH-CONSENT-20261118.OWNHOW.PAGES.DEV",
     "a.ownhow.pages.dev", "ab12cd34.ownhow.pages.dev", "feature-search.ownhow.pages.dev",
     `${"a".repeat(63)}.ownhow.pages.dev`, "FEATURE.OWNHOW.PAGES.DEV",
     "feature.other.pages.dev", "ownhow.pages.dev.evil.example", "feature.ownhow.pages.dev.evil.example",
@@ -717,10 +719,11 @@ test("production and lookalike hosts omit every preview field even with marker-l
 });
 
 test("only the exact controlled alias is marked, never production or arbitrary deployment hashes", () => {
-  const alias = "fix-ownhow-search-consent-20261118.ownhow.pages.dev";
+  const alias = "fix-ownhow-search-consent-20.ownhow.pages.dev";
   const cases = [
     [`https://${alias}/`, true],
     [`https://${alias.toUpperCase()}:443/`, true],
+    ["https://fix-ownhow-search-consent-20261118.ownhow.pages.dev/", false],
     ["https://80fca87a.ownhow.pages.dev/", false],
     ["https://deadbeef.ownhow.pages.dev/", false],
     ["https://0123456789abcdef.ownhow.pages.dev/", false],
@@ -758,7 +761,7 @@ test("only the exact controlled alias is marked, never production or arbitrary d
 });
 
 test("preview markers retain no-choice/deny/invalid-config/storage and pending withdrawal guards", () => {
-  const href = "https://fix-ownhow-search-consent-20261118.ownhow.pages.dev/";
+  const href = "https://fix-ownhow-search-consent-20.ownhow.pages.dev/";
   for (const saved of [undefined, "denied", "corrupt"]) {
     const b = browser({ shippedConfig: true, href, saved });
     noAnalytics(b); b.click("reject"); noAnalytics(b);

@@ -66,16 +66,20 @@ evidence establishes both campaign attribution under those overrides and coverag
 of applicable enhanced events. DebugView alone is not an attribution report.
 
 Only the exact normalized hostname
-**fix-ownhow-search-consent-20261118.ownhow.pages.dev** gets these static
+**fix-ownhow-search-consent-20.ownhow.pages.dev** gets these static
 parameters after saved consent: `debug_mode:true`,
 `campaign_name:ownhow_preview_validation`,
 `campaign_source:ownhow_pages_preview`, and `campaign_medium:qa`.
-This is the controlled alias for the nonmain branch
-`fix/ownhow-search-consent-20261118`: Cloudflare documents lowercasing branch
-names and replacing nonalphanumeric characters with hyphens
-([preview aliases](https://developers.cloudflare.com/pages/configuration/preview-deployments/)).
-It is a contract for the upcoming upload, not proof an alias/deployment already
-exists. URL hostname normalization handles case; ports do not change the host.
+The supplied actual receipt for preview deployment
+`0c0a6ea7-62fb-425d-8f67-314fe65a273b` lists this truncated alias for branch
+`fix/ownhow-search-consent-20261118`, commit
+`b4943210583c60537e97c3718634f14503bf56c3`, with environment `preview` and stage
+`success`. The earlier full-host derivation
+`fix-ownhow-search-consent-20261118.ownhow.pages.dev` was not listed and is now
+explicitly unmarked. The official [preview-alias normalization documentation](https://developers.cloudflare.com/pages/configuration/preview-deployments/)
+did not establish this truncation; this exact host contract comes from the actual
+receipt, not a general truncation rule. URL hostname normalization handles case;
+ports do not change the host.
 Every other host omits all four fields, including `ownhow.dev`, bare
 `ownhow.pages.dev`, the known production hash `80fca87a.ownhow.pages.dev`, all
 future/arbitrary deployment hashes (even genuine preview hashes), `main`, unknown
@@ -96,16 +100,19 @@ and [debug configuration](https://support.google.com/analytics/answer/7201382?hl
 
 For the later separately authorized preview capture, the upload must use exact
 branch metadata `fix/ownhow-search-consent-20261118`. Before browser consent,
-verify the deployment receipt has `environment=preview`, that exact branch, the
-exact controlled alias in its alias list, and the exact frozen candidate source
-bytes. Recheck that the alias response serves that candidate: branch aliases are
+verify a new deployment receipt has `environment=preview`, that exact branch,
+the corrected candidate's exact commit, the actual controlled alias above in its
+alias list, and the exact frozen candidate source bytes. Recheck that the alias
+response serves that candidate: branch aliases are
 mutable, and normalization collisions or later uploads could change their target.
 If receipt or alias/source binding is unproven, **stop GUI validation**; do not
-fall back to a deployment hash URL or widen matching. No upload, DNS, alias or
-receipt verification has occurred in this local task.
+fall back to a deployment hash URL or widen matching. The current deployed old
+tree does not enable markers at its actual alias, so marked GUI validation is
+blocked. No HTTP or GUI acceptance ran. This local correction is not deployed;
+no upload, retry, DNS change or independent remote verification occurred here.
 
 1. Use a fresh isolated browser profile/session exclusively at
-   `https://fix-ownhow-search-consent-20261118.ownhow.pages.dev/`, never the
+   `https://fix-ownhow-search-consent-20.ownhow.pages.dev/`, never the
    deployment hash, for marked validation. Record the exact preview host,
    verified deployment/source binding, and actual start/end timestamps in
    Asia/Singapore (SGT, UTC+08:00). No test window is claimed here.
