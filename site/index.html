@@ -13,8 +13,12 @@
   <meta property="og:url" content="https://ownhow.dev/">
   <meta property="og:locale" content="en_US">
   <meta name="theme-color" content="#f7f8f2">
+  <!-- ownhow-verification:start -->
+  <!-- ownhow-verification:end -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231d493e'/%3E%3Ccircle cx='32' cy='32' r='17' fill='none' stroke='%23d7f58c' stroke-width='7'/%3E%3Cpath d='M32 15v17h17' fill='none' stroke='%23d7f58c' stroke-width='7'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
+  <script src="/analytics-config.js" defer></script>
+  <script src="/analytics.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -123,10 +127,26 @@ openclaw skills install ~/.local/share/ownhow/skills/ownhow-governance --global 
       <p>OwnHow 是一个本地优先的原型工具：梳理不同 AI 助手中的插件与技能，解释任务选择与冲突，记录有证据的工作结果，并把你明确提出的纠正转化为可审阅的个人方法。</p>
       <p>每次应用都需要明确批准，保留版本历史，不改写上游插件与技能。无需云端账号，遥测默认关闭。安装命令见上方，完整使用说明请阅读 <a href="https://github.com/x2v-co/ownhow#readme">README</a>。</p>
     </section>
+    <section id="website-privacy" aria-labelledby="privacy-title">
+      <h2 id="privacy-title">Website privacy / 网站隐私</h2>
+      <p>This website loads Google Analytics only after you allow statistics and a real measurement ID is configured. It measures page visits, technical/device information and, where applicable, interactions such as scrolling, outbound link clicks, site searches, video engagement, file downloads and form interactions; Google may set first-party analytics cookies. No statistics request is made before consent or after a refused reload. Your choice is saved in this browser; if storage is unavailable, statistics stay off.</p>
+      <p>Use the controls below at any time. Withdrawal saves refusal, attempts to clear this site's analytics cookies, and reloads if the tag was requested. It cannot undo earlier collection, in-flight requests, or data held by Google. If saving refusal fails, a refusal parameter in the reload URL keeps that URL blocked; clearing site data removes any older saved choice. This website setting is separate from the CLI, whose telemetry remains off by default.</p>
+      <p lang="zh-CN">仅在您允许且已配置真实统计 ID 后，本网站才加载 Google Analytics，统计页面访问、技术／设备信息，以及适用时的滚动、出站链接点击、站内搜索、视频互动、文件下载和表单互动，可能设置第一方统计 Cookie。拒绝后不加载统计；可随时在下方撤回。撤回会尝试保存拒绝、清除本站统计 Cookie，并在已请求统计脚本时重新载入；无法撤销已收集或传输中的数据。存储不可用时不启用统计；若无法保存拒绝，重新载入网址中的拒绝参数会阻止该网址加载统计，可清除站点数据以移除旧选择。此设置不影响默认关闭遥测的 CLI。</p>
+      <details id="analytics-settings" open>
+        <summary>Statistics settings / 统计设置</summary>
+        <p id="analytics-status" role="status" aria-live="polite">Statistics off until you allow / 允许前不加载统计。</p>
+        <div class="actions">
+          <button id="analytics-allow" type="button">Allow statistics / 允许统计</button>
+          <button id="analytics-reject" type="button">Reject / withdraw statistics / 拒绝或撤回统计</button>
+        </div>
+        <noscript><p>JavaScript is disabled; website statistics do not load. / JavaScript 已禁用，不加载网站统计。</p></noscript>
+      </details>
+    </section>
   </main>
   <footer class="wrap">
     <p><strong>OwnHow</strong> <span>· Apache-2.0 · Built for your own way of working.</span></p>
     <nav aria-label="Project links">
+      <a href="#website-privacy">Website privacy &amp; statistics settings / 网站隐私与统计设置</a>
       <a href="https://github.com/x2v-co/ownhow">GitHub</a>
       <a href="https://github.com/x2v-co/ownhow/tree/main/docs">Documentation</a>
       <a href="https://github.com/x2v-co/ownhow/blob/main/SECURITY.md">Privacy &amp; security</a>

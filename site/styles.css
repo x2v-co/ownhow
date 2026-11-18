@@ -15,6 +15,9 @@ body { margin: 0; }
 a { color: var(--green); text-underline-offset: .22em; }
 a:hover { text-decoration-thickness: 2px; }
 a:focus-visible, summary:focus-visible { outline: 3px solid #477951; outline-offset: 5px; }
+button:focus-visible { outline: 3px solid #477951; outline-offset: 5px; }
+button { font: inherit; padding: .7rem 1rem; border: 1px solid var(--green); border-radius: .35rem; background: var(--paper); color: var(--green); cursor: pointer; }
+button:hover { background: #e5eddf; }
 .wrap { width: min(100% - 3rem, 1080px); margin-inline: auto; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 1.5rem; padding-block: 1.6rem; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: .65rem; font-size: 1.35rem; font-weight: 750; text-decoration: none; }
