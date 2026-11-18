@@ -53,7 +53,8 @@ function browser({ saved, storage = new Map(saved === undefined ? [] : [[KEY, sa
     },
     head: { appendChild(tag) {
       tags.push(tag); requests.push({ kind: "script", url: tag.src });
-      steps.push(["append", Array.from(window.dataLayer ?? [], (args) => args[0])]);
+      steps.push(["append", Array.from(window.dataLayer ?? [], (args) => args[0]),
+        JSON.parse(JSON.stringify(Array.from(window.dataLayer ?? [], (args) => Array.from(args))))]);
     } },
     get cookie() {
       if (faults.cookies) throw new Error("fixture cookie failure");
@@ -106,8 +107,9 @@ function browser({ saved, storage = new Map(saved === undefined ? [] : [[KEY, sa
   const initializations = [];
   function vendor({ mode = "immediate", defaultCookies = false } = {}) {
     let settings = {}, initialized = false;
-    function collect(parameters = {}) {
-      requests.push({ kind: "collection", url: "https://www.google-analytics.com/g/collect", event: "page_view",
+    function collect(parameters = {}, event = "page_view") {
+      requests.push({ kind: "collection", url: "https://www.google-analytics.com/g/collect", event,
+        parameters: { ...settings, ...parameters },
         page_location: parameters.page_location ?? settings.page_location ?? window.location.href });
     }
     function initialize() {
@@ -140,6 +142,11 @@ function browser({ saved, storage = new Map(saved === undefined ? [] : [[KEY, sa
       for (const command of commands) processCommand(command);
       return Array.prototype.push.apply(this, commands);
     };
+    // A bounded stand-in for an SDK-generated interaction: inherit the settings
+    // already supplied by the shipped bootstrap, without another config call.
+    return { enhancedEvent(name) {
+      if (!window[`ga-disable-${configuredId}`]) collect({}, name);
+    } };
   }
   init();
   return { window, elements, storage, steps, requests, tags, commands, initializations, cookieJar, click, init, storageEvent, vendor,
@@ -619,4 +626,165 @@ test("bilingual disclosure qualifies enhanced interactions and scopes reported p
     "Local fakes do not establish actual vendor collection, event counts, or sanitization of automatically generated event parameters"
   ]) assert.ok(docs.includes(fact), fact);
   assert.doesNotMatch(docs, /settings still need COO confirmation|must also check that enhanced measurement/);
+});
+
+const PREVIEW_MARKERS = {
+  debug_mode: true,
+  campaign_name: "ownhow_preview_validation",
+  campaign_source: "ownhow_pages_preview",
+  campaign_medium: "qa"
+};
+
+function previewMarkers(options, expected) {
+  for (const [key, value] of Object.entries(PREVIEW_MARKERS)) {
+    assert.equal(Object.hasOwn(options, key), expected, key);
+    if (expected) assert.equal(options[key], value, key);
+  }
+}
+
+test("controlled OwnHow branch alias configures static markers after shipped-ID consent and before append", () => {
+  for (const host of ["fix-ownhow-search-consent-20261118.ownhow.pages.dev",
+    "FIX-OWNHOW-SEARCH-CONSENT-20261118.OWNHOW.PAGES.DEV"]) {
+    const href = `https://${host}/?utm_source=private-source&utm_campaign=private-campaign#private-fragment`;
+    for (const mode of ["immediate", "legacy"]) {
+      const b = browser({ shippedConfig: true, href });
+      noAnalytics(b);
+      b.click("allow"); b.click("allow"); b.init();
+      assert.equal(b.storage.get(KEY), "granted");
+      assert.deepEqual(b.requests, [{ kind: "script", url: `https://www.googletagmanager.com/gtag/js?id=${SHIPPED_ID}` }]);
+      assert.deepEqual(b.steps.find(([kind]) => kind === "append")[1], ["set", "js", "config", "event"]);
+      const queue = Array.from(b.window.dataLayer, (args) => Array.from(args));
+      const appendedQueue = b.steps.find(([kind]) => kind === "append")[2];
+      previewMarkers(appendedQueue[0][1], true);
+      previewMarkers(appendedQueue[2][2], true);
+      previewMarkers(queue[0][1], true);
+      assert.equal(queue[2][1], SHIPPED_ID);
+      previewMarkers(queue[2][2], true);
+      assert.equal(queue[0][1].send_page_view, false);
+      assert.equal(queue[2][2].send_page_view, false);
+      // Event scope supplies only the unchanged URL/referrer overrides; it does
+      // not override the config/global markers inherited by other page events.
+      assert.deepEqual(Object.keys(queue[3][2]).sort(), ["page_location", "page_referrer"]);
+      assert.doesNotMatch(JSON.stringify(queue), /private-|utm_|pages\.dev/);
+      const sdk = b.vendor({ mode });
+      previewMarkers(b.initializations[0], true);
+      const commands = b.commands.length;
+      b.tags[0].onload(); b.tags[0].onload(); b.click("allow"); b.init();
+      assert.equal(b.commands.length, commands);
+      assert.equal(b.commands.filter(([type]) => type === "config").length, 1);
+      assert.equal(b.commands.filter(([type, name]) => type === "event" && name === "page_view").length, 1);
+      assert.equal(b.requests.filter(({ kind }) => kind === "collection").length, 1);
+      sdk.enhancedEvent("scroll");
+      for (const request of b.requests.filter(({ kind }) => kind === "collection")) {
+        previewMarkers(request.parameters, true);
+        assert.equal(request.parameters.page_location, "https://ownhow.dev/");
+        assert.equal(request.parameters.page_referrer, "");
+      }
+      assert.equal(b.requests.filter(({ event }) => event === "page_view").length, 1);
+      b.click("reject");
+      const requestCount = b.requests.length;
+      sdk.enhancedEvent("scroll"); b.window.gtag("event", "page_view");
+      assert.equal(b.requests.length, requestCount);
+      noAnalytics(browser({ shippedConfig: true, storage: b.storage, href: b.window.location.href }));
+    }
+  }
+});
+
+test("production and lookalike hosts omit every preview field even with marker-like queries", () => {
+  for (const host of ["ownhow.dev", "www.ownhow.dev", "ownhow.pages.dev", "other.pages.dev",
+    "a.ownhow.pages.dev", "ab12cd34.ownhow.pages.dev", "feature-search.ownhow.pages.dev",
+    `${"a".repeat(63)}.ownhow.pages.dev`, "FEATURE.OWNHOW.PAGES.DEV",
+    "feature.other.pages.dev", "ownhow.pages.dev.evil.example", "feature.ownhow.pages.dev.evil.example",
+    "nested.feature.ownhow.pages.dev", "feature-ownhow.pages.dev", "notownhow.pages.dev",
+    "feature.ownhowpages.dev", "feature.ownhow.pages.dev.", "-feature.ownhow.pages.dev",
+    "feature-.ownhow.pages.dev", "feature_name.ownhow.pages.dev", `${"a".repeat(64)}.ownhow.pages.dev`,
+    "localhost", "127.0.0.1", "[::1]"]) {
+    const b = browser({ shippedConfig: true, saved: "granted",
+      href: `https://${host}/?debug_mode=true&utm_campaign=ownhow_preview_validation&preview=feature.ownhow.pages.dev` });
+    for (const args of b.window.dataLayer) {
+      const options = args[0] === "set" ? args[1] : args[2];
+      if (options && typeof options === "object") previewMarkers(options, false);
+    }
+    b.vendor(); b.tags[0].onload();
+    previewMarkers(b.initializations[0], false);
+    const views = b.requests.filter(({ kind }) => kind === "collection");
+    assert.equal(views.length, 1);
+    previewMarkers(views[0].parameters, false);
+  }
+  const b = browser({ shippedConfig: true, saved: "granted", href: "https://feature.ownhow.pages.dev@evil.example/" });
+  previewMarkers(b.window.dataLayer[0][1], false);
+  previewMarkers(b.window.dataLayer[2][2], false);
+});
+
+test("only the exact controlled alias is marked, never production or arbitrary deployment hashes", () => {
+  const alias = "fix-ownhow-search-consent-20261118.ownhow.pages.dev";
+  const cases = [
+    [`https://${alias}/`, true],
+    [`https://${alias.toUpperCase()}:443/`, true],
+    ["https://80fca87a.ownhow.pages.dev/", false],
+    ["https://deadbeef.ownhow.pages.dev/", false],
+    ["https://0123456789abcdef.ownhow.pages.dev/", false],
+    ["https://main.ownhow.pages.dev/", false],
+    ["https://unknown.ownhow.pages.dev/", false],
+    ["https://fix-another-branch.ownhow.pages.dev/", false],
+    [`https://nested.${alias}/`, false],
+    [`https://${alias}.evil.example/`, false],
+    [`https://${alias}./`, false],
+    [`https://${alias}@evil.example/`, false],
+    [`https://ownhow.dev/?preview=${alias}&debug_mode=true`, false]
+  ];
+  for (const [href, marked] of cases) {
+    const b = browser({ shippedConfig: true, saved: "granted", href });
+    const appendedQueue = b.steps.find(([kind]) => kind === "append")[2];
+    assert.deepEqual(appendedQueue.map(([type]) => type), ["set", "js", "config", "event"], href);
+    previewMarkers(appendedQueue[0][1], marked);
+    assert.equal(appendedQueue[2][1], SHIPPED_ID);
+    previewMarkers(appendedQueue[2][2], marked);
+    assert.equal(appendedQueue[0][1].send_page_view, false);
+    assert.equal(appendedQueue[2][2].send_page_view, false);
+    assert.doesNotMatch(JSON.stringify(appendedQueue), /pages\.dev|evil\.example|debug_mode=true/);
+    const sdk = b.vendor();
+    b.tags[0].onload(); b.click("allow"); b.init();
+    previewMarkers(b.initializations[0], marked);
+    sdk.enhancedEvent("scroll");
+    assert.equal(b.requests.filter(({ kind }) => kind === "script").length, 1);
+    assert.equal(b.requests.filter(({ event }) => event === "page_view").length, 1);
+    for (const request of b.requests.filter(({ kind }) => kind === "collection")) {
+      previewMarkers(request.parameters, marked);
+      assert.equal(request.page_location, "https://ownhow.dev/");
+      assert.equal(request.parameters.page_referrer, "");
+    }
+  }
+});
+
+test("preview markers retain no-choice/deny/invalid-config/storage and pending withdrawal guards", () => {
+  const href = "https://fix-ownhow-search-consent-20261118.ownhow.pages.dev/";
+  for (const saved of [undefined, "denied", "corrupt"]) {
+    const b = browser({ shippedConfig: true, href, saved });
+    noAnalytics(b); b.click("reject"); noAnalytics(b);
+    noAnalytics(browser({ shippedConfig: true, href: b.window.location.href, storage: b.storage }));
+  }
+  for (const faults of [{ access: true }, { read: true }, { write: true }, { writeNoop: true }]) {
+    const b = browser({ shippedConfig: true, href, faults });
+    noAnalytics(b); b.click("allow"); noAnalytics(b);
+  }
+  for (const id of ["", "G-invalid"]) {
+    const b = browser({ href, saved: "granted", id });
+    b.click("allow"); noAnalytics(b);
+  }
+  for (const fault of [null, "write", "read", "access", "cookies"]) {
+    const faults = {};
+    const b = browser({ shippedConfig: true, href, saved: "granted", faults });
+    previewMarkers(b.window.dataLayer[2][2], true);
+    const lateLoad = b.tags[0].onload, lateError = b.tags[0].onerror;
+    if (fault) faults[fault] = true;
+    b.click("reject");
+    assert.equal(b.window.dataLayer.length, 0);
+    b.vendor(); lateLoad(); lateError(); b.window.gtag("event", "page_view");
+    assert.equal(b.commands.length, 0);
+    assert.equal(b.initializations.length, 0);
+    assert.equal(b.requests.length, 1);
+    assert.equal(b.window[`ga-disable-${SHIPPED_ID}`], true);
+    noAnalytics(browser({ shippedConfig: true, href: b.window.location.href, saved: "granted" }));
+  }
 });

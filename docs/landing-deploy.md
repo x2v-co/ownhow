@@ -57,6 +57,87 @@ Re-run the focused site tests after configuration. Current property settings and
 their limitations are recorded below; this task does not inspect or change Google
 consoles or permissions.
 
+## Preview markers and reversible reporting exclusion
+
+The same real stream is used on previews. Canonical `page_location` and empty
+`page_referrer` remain unchanged, so a preview hostname or URL UTM alone is not
+evidence of separable traffic. No documented no-source alternative in the supplied
+evidence establishes both campaign attribution under those overrides and coverage
+of applicable enhanced events. DebugView alone is not an attribution report.
+
+Only the exact normalized hostname
+**fix-ownhow-search-consent-20261118.ownhow.pages.dev** gets these static
+parameters after saved consent: `debug_mode:true`,
+`campaign_name:ownhow_preview_validation`,
+`campaign_source:ownhow_pages_preview`, and `campaign_medium:qa`.
+This is the controlled alias for the nonmain branch
+`fix/ownhow-search-consent-20261118`: Cloudflare documents lowercasing branch
+names and replacing nonalphanumeric characters with hyphens
+([preview aliases](https://developers.cloudflare.com/pages/configuration/preview-deployments/)).
+It is a contract for the upcoming upload, not proof an alias/deployment already
+exists. URL hostname normalization handles case; ports do not change the host.
+Every other host omits all four fields, including `ownhow.dev`, bare
+`ownhow.pages.dev`, the known production hash `80fca87a.ownhow.pages.dev`, all
+future/arbitrary deployment hashes (even genuine preview hashes), `main`, unknown
+labels and other branch aliases. Nested aliases, lookalike suffixes, other Pages
+projects, arbitrary local hosts and userinfo/query switches do not qualify.
+`debug_mode` is omitted entirely on those hosts, never set to false. Marker
+values do not include the preview label, URL, query, fragment or referrer.
+
+These options enter both the existing global `set` and stream `config` before
+script insertion, following successful consent persistence. They are settings
+for page events, including applicable Enhanced Measurement, rather than markers
+on only the explicit view. Event scope outranks config, which outranks global
+set; the explicit view overrides only location/referrer, leaving marker settings
+inherited. Remote vendor/UI behavior still needs payload verification. See
+[campaign configuration](https://developers.google.com/analytics/devguides/collection/ga4/reference/config),
+[parameter precedence](https://developers.google.com/tag-platform/gtagjs/reference#parameter_precedence)
+and [debug configuration](https://support.google.com/analytics/answer/7201382?hl=en).
+
+For the later separately authorized preview capture, the upload must use exact
+branch metadata `fix/ownhow-search-consent-20261118`. Before browser consent,
+verify the deployment receipt has `environment=preview`, that exact branch, the
+exact controlled alias in its alias list, and the exact frozen candidate source
+bytes. Recheck that the alias response serves that candidate: branch aliases are
+mutable, and normalization collisions or later uploads could change their target.
+If receipt or alias/source binding is unproven, **stop GUI validation**; do not
+fall back to a deployment hash URL or widen matching. No upload, DNS, alias or
+receipt verification has occurred in this local task.
+
+1. Use a fresh isolated browser profile/session exclusively at
+   `https://fix-ownhow-search-consent-20261118.ownhow.pages.dev/`, never the
+   deployment hash, for marked validation. Record the exact preview host,
+   verified deployment/source binding, and actual start/end timestamps in
+   Asia/Singapore (SGT, UTC+08:00). No test window is claimed here.
+   Avoid mixing production visits into that session. Inspect real request
+   parameters and applicable enhanced events for the fixed markers, unchanged
+   canonical location/referrer, and existing consent/withdrawal behavior.
+2. After reporting data is available, use Traffic acquisition with **Session
+   campaign** exactly `ownhow_preview_validation`; cross-check **Session source**
+   `ownhow_pages_preview`, **Session medium** `qa`, or **Session source / medium**
+   `ownhow_pages_preview / qa`. First include the cohort to establish that the
+   actual session was attributed as intended. Keep the recorded SGT window and
+   report date/time-zone boundaries alongside the comparison. DebugView can help
+   inspect debug events, but does not prove those acquisition dimensions.
+3. For a comparison excluding previews, apply an **exclude** report filter (or
+   exploration exclusion) for that exact Session campaign and compare with the
+   unfiltered view. Remove the filter/exclusion to restore that view. Only the
+   selected report/exploration changes; other views and raw property data are
+   not cleaned or deleted. The fixed campaign identifies a preview cohort, not
+   an individual deployment; correlate deployments using the external run log.
+
+Attribution scope, processing delays and existing session history can affect
+results: session exclusions exclude the associated sessions, not a proven
+event-by-event production/test partition. Confirm the actual cohort before using
+the comparison. References: [Traffic acquisition](https://support.google.com/analytics/answer/12923437?hl=en)
+and [manual campaign dimensions](https://support.google.com/analytics/answer/11242870?hl=en).
+Treat raw data/unfiltered totals as containing preview test traffic. Debug mode
+does not itself exclude it. COO reports only Internal Traffic in Testing, with
+no Developer filter; this task creates/activates none. An active developer-data
+exclusion is a different, permanent collection-processing choice, outside scope:
+[developer traffic filters](https://support.google.com/analytics/answer/13296662?hl=en).
+Actual vendor/browser and backend reporting acceptance remains incomplete.
+
 ## Website privacy and withdrawal
 
 The landing page contains bilingual disclosure and always reachable native
